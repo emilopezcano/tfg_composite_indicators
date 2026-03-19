@@ -1,0 +1,692 @@
+---
+title: "Análisis de Indicadores Compuestos con COINr - 2025"
+subtitle: "Construcción de un Índice Compuesto de Indicadores"
+author: "TFG - URJC"
+date: "`r Sys.Date()`"
+format: html
+toc: true
+toc-depth: 3
+editor: source
+---
+
+# Introducción
+
+Este análisis construye un **índice compuesto** a partir de múltiples indicadores usando el paquete **COINr** (Composite Indicators in R). El objetivo es agregar indicadores normalizados en un único indicador sintético que capture la complejidad multidimensional.
+
+---
+
+# 1. Preparación del Entorno
+
+```{r}
+#| label: setup
+#| warning: false
+#| message: false
+
+# Instalar COINr si no está disponible
+if (!require("COINr", quietly = TRUE)) {
+  install.packages("COINr")
+}
+
+# Cargar librerías necesarias
+library(COINr)
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(corrplot)
+library(DT)
+library(gridExtra)
+
+# Configuración de opciones
+options(scipen = 999)  # Evitar notación científica
+```
+
+---
+
+# 2. Cargar Datos
+
+```{r}
+#| label: load-data
+
+# Ruta del archivo
+ruta_datos <- "d:/Datos Anabel/OneDrive/Documentos/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/indicators_data.rds"
+
+# Cargar archivo RDS
+if (file.exists(ruta_datos)) {
+  data_indicators <- readRDS(ruta_datos)
+  cat("✓ Datos cargados correctamente\n\n")
+} else {
+  stop("Archivo no encontrado. Verifica la ruta.")
+}
+
+# Exploración inicial
+cat("Dimensiones de los datos:", nrow(data_indicators), "filas x", ncol(data_indicators), "columnas\n\n")
+cat("Primeras filas:\n")
+print(head(data_indicators))
+
+cat("\n\nEstructura de los datos:\n")
+str(data_indicators)
+
+cat("\nNombres de columnas:\n")
+print(names(data_indicators))
+```
+
+---
+
+# 3. Filtrar Datos para 2025
+
+```{r}
+#| label: filter-2025
+
+# Verificar si existe columna de fecha
+if ("date" %in% names(data_indicators)) {
+  # Convertir date a formato Date si es necesario
+  if (is.character(data_indicators$date)) {
+    data_indicators$date <- as.Date(data_indicators$date)
+  }
+  
+  # Extraer año
+  data_indicators$year <- lubridate::year(data_indicators$date)
+  
+  # Ver años disponibles
+  cat("Años disponibles en los datos:\n")
+  print(table(data_indicators$year))
+  
+  # Filtrar para 2025
+  data_2025 <- data_indicators %>%
+    filter(year == 2025) %>%
+    select(-year, -date)  # Eliminar columnas temporales
+  
+} else {
+  cat("⚠️ No se encontró columna 'date'. Se usarán todos los datos.\n\n")
+  data_2025 <- data_indicators
+}
+
+cat("Datos filtrados para 2025:\n")
+cat("Dimensiones:", nrow(data_2025), "filas x", ncol(data_2025), "columnas\n\n")
+
+if (nrow(data_2025) == 0) {
+  cat("⚠️ ADVERTENCIA: No hay datos para 2025. Se usarán todos los datos disponibles.\n\n")
+  data_2025 <- data_indicators %>% select(-any_of(c("year", "date")))
+}
+
+print(head(data_2025))
+```
+
+---
+
+# 4. Preparar Datos para COINr
+
+```{r}
+#| label: prepare-coinr
+
+# Identificar columna de unidades geográficas (geo_id o similar)
+# Generalmente la primera columna
+geo_col <- names(data_2025)[1]
+indicator_cols <- names(data_2025)[-1]
+
+cat("Columna de identificación:", geo_col, "\n")
+cat("Número de indicadores:", length(indicator_cols), "\n")
+cat("\nIndicadores identificados:\n")
+for (i in seq_along(indicator_cols)) {
+  cat(sprintf("  %d. %s\n", i, indicator_cols[i]))
+}
+
+# Convertir a formato WIDE y renombrar a uCode (requerido por COINr)
+coin_data <- data_2025 %>%
+  # Agrupar por unidad geográfica y calcular media (si hay duplicados)
+  group_by(across(all_of(geo_col))) %>%
+  summarise(across(all_of(indicator_cols), mean, na.rm = TRUE), .groups = "drop") %>%
+  # Renombrar primera columna a uCode
+  rename(uCode = all_of(geo_col)) %>%
+  as.data.frame()
+
+# Verificar datos
+cat("\n\nDatos preparados para COINr:\n")
+cat("Dimensiones:", nrow(coin_data), "unidades x", ncol(coin_data), "columnas\n\n")
+print(head(coin_data))
+
+# Verificar duplicados en uCode
+if (any(duplicated(coin_data$uCode))) {
+  cat("⚠️ ADVERTENCIA: Aún hay duplicados en uCode. Revisar preparación de datos.\n")
+} else {
+  cat("✓ No hay duplicados en uCode\n")
+}
+
+# Verificar NA
+cat("\nValores NA por columna:\n")
+print(colSums(is.na(coin_data)))
+```
+
+---
+
+# 5. Crear Metadatos de Indicadores
+
+```{r}
+#| label: create-metadata
+
+# Crear metadatos COINr con estructura completa requerida
+iMeta <- data.frame(
+  iCode = as.character(indicator_cols),      # Código único del indicador
+  Indicator = indicator_cols,                 # Nombre del indicador
+  Level = 1,                                 # Nivel jerárquico (1 = indicador individual)
+  Type = as.character(rep("Indicator", length(indicator_cols))),  # Tipo (Indicator o Aggregate)
+  Parent = as.character(rep(NA, length(indicator_cols))),         # Padre (NA para indicadores sin agregación)
+  Direction = 1,                             # 1 = más es mejor, -1 = menos es mejor
+  Weight = 1,                                # Pesos iguales (puedes personalizarlos)
+  stringsAsFactors = FALSE
+)
+
+cat("Metadatos de Indicadores:\n\n")
+print(iMeta)
+
+cat("\n\nINTERPRETACIÓN DE DIRECCIONES:\n")
+cat("Direction = 1:  Más es mejor (ej: % transporte limpio, satisfacción)\n")
+cat("Direction = -1: Menos es mejor (ej: contaminación, enfermedades)\n\n")
+cat("⚠️ IMPORTANTE: Ajusta las direcciones según tu conocimiento del dominio\n")
+cat("  Si algún indicador es 'menos es mejor', cambia a Direction = -1\n")
+```
+
+---
+
+# 6. Crear Objeto COIN
+
+```{r}
+#| label: create-coin
+
+# Crear objeto COIN
+tryCatch({
+  COIN <- new_coin(
+    iData = coin_data,
+    iMeta = iMeta,
+    split_to = NULL  # Sin split temporal
+  )
+  
+  cat("✓ Objeto COIN creado correctamente\n\n")
+  
+  # Ver estructura
+  cat("Estructura del COIN:\n")
+  cat("  Número de unidades:", nrow(COIN$Data$Raw), "\n")
+  cat("  Número de indicadores:", ncol(COIN$Data$Raw) - 1, "\n\n")
+  
+  # Datos crudos (raw)
+  cat("Datos RAW (originales):\n")
+  print(head(COIN$Data$Raw))
+  
+}, error = function(e) {
+  cat("❌ Error al crear COIN:", e$message, "\n")
+})
+```
+
+---
+
+# 7. Normalizar Indicadores
+
+```{r}
+#| label: normalize
+
+# Aplicar normalización Min-Max [0,1]
+tryCatch({
+  COIN <- Normalise(
+    COIN, 
+    global_specs = list(
+      f_n = "n_minmax",      # Min-Max normalization
+      lower_limit = 0,
+      upper_limit = 1
+    )
+  )
+  
+  cat("✓ Normalización completada\n\n")
+  
+  # Ver datos normalizados
+  cat("Datos NORMALIZADOS (escala 0-1):\n")
+  normalised_data <- COIN$Data$Normalised$Individual
+  print(head(normalised_data))
+  
+  # Resumen estadístico
+  cat("\n\nEstadísticos de datos normalizados:\n")
+  print(summary(normalised_data[, -1]))
+  
+}, error = function(e) {
+  cat("❌ Error en normalización:", e$message, "\n")
+})
+```
+
+---
+
+# 8. Visualizar Indicadores Normalizados
+
+```{r}
+#| label: plot-normalized
+#| fig-height: 10
+#| fig-width: 14
+
+tryCatch({
+  # Convertir a formato largo para ggplot
+  normalised_long <- normalised_data %>%
+    pivot_longer(
+      cols = -uCode,
+      names_to = "Indicador",
+      values_to = "Valor_Normalizado"
+    )
+  
+  # Gráfico de barras por indicador
+  ggplot(normalised_long, aes(x = reorder(uCode, Valor_Normalizado), 
+                               y = Valor_Normalizado, 
+                               fill = Indicador)) +
+    geom_col(position = "dodge", alpha = 0.8) +
+    coord_flip() +
+    facet_wrap(~Indicador, scales = "free") +
+    labs(
+      title = "Indicadores Normalizados (0-1) por Unidad Geográfica",
+      x = "Unidad Geográfica",
+      y = "Valor Normalizado",
+      fill = "Indicador"
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(face = "bold", size = 14)
+    )
+  
+}, error = function(e) {
+  cat("❌ Error en visualización:", e$message, "\n")
+})
+```
+
+---
+
+# 9. Analizar Correlaciones
+
+```{r}
+#| label: correlations
+#| fig-height: 8
+#| fig-width: 10
+
+tryCatch({
+  # Calcular matriz de correlaciones
+  corr_matrix <- cor(normalised_data[, -1], use = "complete.obs")
+  
+  # Gráfico de correlaciones
+  corrplot(
+    corr_matrix,
+    method = "circle",
+    type = "upper",
+    diag = TRUE,
+    col = colorRampPalette(c("#2166ac", "white", "#b2182b"))(200),
+    title = "Matriz de Correlaciones entre Indicadores",
+    addCoef.col = "black",
+    number.cex = 0.7
+  )
+  
+  # Tabla de correlaciones
+  cat("\n\nMatriz de Correlaciones:\n")
+  print(round(corr_matrix, 3))
+  
+  # Identificar indicadores altamente correlacionados
+  high_corr <- which(abs(corr_matrix) > 0.8 & abs(corr_matrix) < 1, arr.ind = TRUE)
+  if (nrow(high_corr) > 0) {
+    cat("\n⚠️ Indicadores altamente correlacionados (|r| > 0.8):\n")
+    for (i in 1:nrow(high_corr)) {
+      ind1 <- rownames(corr_matrix)[high_corr[i, 1]]
+      ind2 <- colnames(corr_matrix)[high_corr[i, 2]]
+      corr_val <- corr_matrix[high_corr[i, 1], high_corr[i, 2]]
+      cat(sprintf("  %s <-> %s: r = %.3f\n", ind1, ind2, corr_val))
+    }
+  }
+  
+}, error = function(e) {
+  cat("❌ Error en análisis de correlaciones:", e$message, "\n")
+})
+```
+
+---
+
+# 10. Crear Índice Compuesto
+
+```{r}
+#| label: aggregate
+
+tryCatch({
+  # Agregar a un índice único usando media aritmética
+  COIN <- Aggregate(
+    COIN,
+    f_ag = "a_mean"  # Media aritmética de indicadores normalizados
+  )
+  
+  cat("✓ Índice compuesto creado\n\n")
+  
+  # Extraer resultados
+  composite_index <- COIN$Data$Aggregated$L2
+  
+  cat("Índice Compuesto:\n")
+  print(composite_index)
+  
+  # Resumen estadístico
+  cat("\n\nEstadísticos del Índice Compuesto:\n")
+  cat("  Mínimo:", round(min(composite_index$Score, na.rm = TRUE), 4), "\n")
+  cat("  Máximo:", round(max(composite_index$Score, na.rm = TRUE), 4), "\n")
+  cat("  Media:", round(mean(composite_index$Score, na.rm = TRUE), 4), "\n")
+  cat("  Mediana:", round(median(composite_index$Score, na.rm = TRUE), 4), "\n")
+  cat("  Desv. Est.:", round(sd(composite_index$Score, na.rm = TRUE), 4), "\n")
+  
+}, error = function(e) {
+  cat("❌ Error en agregación:", e$message, "\n")
+})
+```
+
+---
+
+# 11. Ranking y Clasificación
+
+```{r}
+#| label: ranking
+
+tryCatch({
+  # Crear ranking
+  ranking_2025 <- composite_index %>%
+    as.data.frame() %>%
+    mutate(
+      Ranking = row_number(desc(Score)),
+      Cuartil = ntile(desc(Score), 4)
+    ) %>%
+    mutate(
+      Clasificacion = case_when(
+        Cuartil == 1 ~ "Muy Alto (Q1)",
+        Cuartil == 2 ~ "Alto (Q2)",
+        Cuartil == 3 ~ "Medio (Q3)",
+        Cuartil == 4 ~ "Bajo (Q4)",
+        TRUE ~ "NA"
+      )
+    ) %>%
+    select(uCode, Score, Ranking, Cuartil, Clasificacion) %>%
+    arrange(Ranking)
+  
+  cat("RANKING DE UNIDADES POR ÍNDICE COMPUESTO (2025)\n")
+  cat("=".^60, "\n\n")
+  print(ranking_2025)
+  
+  # Tabla interactiva
+  cat("\n\nTabla interactiva:\n")
+  datatable(ranking_2025,
+            rownames = FALSE,
+            options = list(
+              pageLength = 10,
+              scrollX = TRUE,
+              columnDefs = list(
+                list(className = 'dt-center', targets = c(1, 2, 3, 4))
+              )
+            ))
+  
+}, error = function(e) {
+  cat("❌ Error en ranking:", e$message, "\n")
+})
+```
+
+---
+
+# 12. Visualizar Índice Compuesto
+
+```{r}
+#| label: plot-index
+#| fig-height: 10
+#| fig-width: 12
+
+tryCatch({
+  # Gráfico de barras del índice
+  p1 <- ggplot(ranking_2025, aes(x = reorder(uCode, Score), y = Score, fill = Clasificacion)) +
+    geom_col(alpha = 0.85, color = "black", linewidth = 0.5) +
+    scale_fill_manual(
+      values = c("Muy Alto (Q1)" = "#d73027", 
+                 "Alto (Q2)" = "#fee090",
+                 "Medio (Q3)" = "#91bfdb",
+                 "Bajo (Q4)" = "#4575b4")
+    ) +
+    coord_flip() +
+    labs(
+      title = "Índice Compuesto de Indicadores - 2025",
+      x = "Unidad Geográfica",
+      y = "Score Compuesto",
+      fill = "Clasificación"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      legend.position = "bottom"
+    )
+  
+  # Gráfico de cajas por clasificación
+  p2 <- ggplot(ranking_2025, aes(x = Clasificacion, y = Score, fill = Clasificacion)) +
+    geom_boxplot(alpha = 0.7, color = "black") +
+    geom_point(position = position_jitter(w = 0.2), alpha = 0.5, size = 2) +
+    scale_fill_manual(
+      values = c("Muy Alto (Q1)" = "#d73027", 
+                 "Alto (Q2)" = "#fee090",
+                 "Medio (Q3)" = "#91bfdb",
+                 "Bajo (Q4)" = "#4575b4")
+    ) +
+    labs(
+      title = "Distribución del Índice por Clasificación",
+      x = "Clasificación",
+      y = "Score Compuesto",
+      fill = "Clasificación"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 14))
+  
+  # Mostrar gráficos
+  print(p1)
+  print(p2)
+  
+}, error = function(e) {
+  cat("❌ Error en visualización del índice:", e$message, "\n")
+})
+```
+
+---
+
+# 13. Análisis de Descomposición
+
+```{r}
+#| label: decomposition
+#| fig-height: 8
+#| fig-width: 12
+
+tryCatch({
+  # Contribución de cada indicador al índice compuesto
+  contribuciones <- normalised_data %>%
+    pivot_longer(
+      cols = -uCode,
+      names_to = "Indicador",
+      values_to = "Valor"
+    ) %>%
+    group_by(Indicador) %>%
+    summarise(
+      Media = mean(Valor, na.rm = TRUE),
+      SD = sd(Valor, na.rm = TRUE),
+      Min = min(Valor, na.rm = TRUE),
+      Max = max(Valor, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(Media))
+  
+  cat("CONTRIBUCIONES PROMEDIO POR INDICADOR:\n")
+  cat("=".^80, "\n\n")
+  print(contribuciones)
+  
+  # Gráfico de barras de contribuciones
+  ggplot(contribuciones, aes(x = reorder(Indicador, Media), y = Media, fill = Media)) +
+    geom_col(alpha = 0.85, color = "black") +
+    scale_fill_gradient(low = "#91bfdb", high = "#d73027") +
+    geom_errorbar(aes(ymin = Media - SD, ymax = Media + SD), width = 0.3, alpha = 0.6) +
+    coord_flip() +
+    labs(
+      title = "Contribución Promedio de Indicadores (con ± 1 SD)",
+      x = "Indicador",
+      y = "Media Normalizada",
+      fill = "Media"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 14))
+  
+}, error = function(e) {
+  cat("❌ Error en descomposición:", e$message, "\n")
+})
+```
+
+---
+
+# 14. Análisis de Sensibilidad
+
+```{r}
+#| label: sensitivity
+
+tryCatch({
+  # Correlación entre cada indicador y el índice compuesto
+  correlacion_con_indice <- data.frame(
+    Indicador = indicator_cols,
+    Correlacion_con_Indice = sapply(indicator_cols, function(x) {
+      cor(normalised_data[[x]], composite_index$Score, use = "complete.obs")
+    })
+  ) %>%
+    arrange(desc(abs(Correlacion_con_Indice)))
+  
+  cat("CORRELACIÓN ENTRE INDICADORES E ÍNDICE COMPUESTO:\n")
+  cat("=".^70, "\n\n")
+  print(correlacion_con_indice)
+  
+  # Gráfico
+  ggplot(correlacion_con_indice, aes(x = reorder(Indicador, Correlacion_con_Indice), 
+                                      y = Correlacion_con_Indice,
+                                      fill = Correlacion_con_Indice > 0)) +
+    geom_col(alpha = 0.85, color = "black") +
+    scale_fill_manual(values = c("#d73027", "#4575b4"), guide = "none") +
+    geom_hline(yintercept = 0, color = "black", linewidth = 0.3) +
+    coord_flip() +
+    labs(
+      title = "Importancia de Indicadores en el Índice Compuesto",
+      x = "Indicador",
+      y = "Correlación con Índice",
+      subtitle = "Valores positivos: contribuyen positivamente al índice"
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 14))
+  
+}, error = function(e) {
+  cat("❌ Error en análisis de sensibilidad:", e$message, "\n")
+})
+```
+
+---
+
+# 15. Exportar Resultados
+
+```{r}
+#| label: export
+
+# Crear carpeta de resultados si no existe
+carpeta_resultados <- "resultados_2025"
+if (!dir.exists(carpeta_resultados)) {
+  dir.create(carpeta_resultados, showWarnings = FALSE)
+}
+
+tryCatch({
+  # Exportar ranking
+  write.csv(ranking_2025, 
+            file.path(carpeta_resultados, "ranking_indice_compuesto_2025.csv"), 
+            row.names = FALSE)
+  
+  # Exportar datos normalizados
+  write.csv(normalised_data, 
+            file.path(carpeta_resultados, "indicadores_normalizados_2025.csv"), 
+            row.names = FALSE)
+  
+  # Exportar contribuciones
+  write.csv(contribuciones, 
+            file.path(carpeta_resultados, "contribuciones_indicadores_2025.csv"), 
+            row.names = FALSE)
+  
+  # Exportar correlaciones
+  write.csv(correlacion_con_indice, 
+            file.path(carpeta_resultados, "correlaciones_con_indice_2025.csv"), 
+            row.names = FALSE)
+  
+  # Exportar matriz de correlaciones
+  write.csv(round(corr_matrix, 3), 
+            file.path(carpeta_resultados, "matriz_correlaciones_2025.csv"))
+  
+  cat("✓ Resultados exportados a la carpeta '", carpeta_resultados, "/'\n\n", sep = "")
+  cat("Archivos generados:\n")
+  cat("  - ranking_indice_compuesto_2025.csv\n")
+  cat("  - indicadores_normalizados_2025.csv\n")
+  cat("  - contribuciones_indicadores_2025.csv\n")
+  cat("  - correlaciones_con_indice_2025.csv\n")
+  cat("  - matriz_correlaciones_2025.csv\n")
+  
+}, error = function(e) {
+  cat("❌ Error en exportación:", e$message, "\n")
+})
+```
+
+---
+
+# Resumen y Conclusiones
+
+```{r}
+#| label: summary
+
+cat("═".^80, "\n")
+cat("RESUMEN DEL ANÁLISIS COINr - 2025\n")
+cat("═".^80, "\n\n")
+
+cat("📊 DATOS:\n")
+cat("  • Unidades geográficas analizadas:", nrow(ranking_2025), "\n")
+cat("  • Indicadores incluidos:", length(indicator_cols), "\n")
+cat("  • Año analizado: 2025\n\n")
+
+cat("📈 MÉTODO:\n")
+cat("  • Normalización: Min-Max [0-1]\n")
+cat("  • Agregación: Media aritmética\n")
+cat("  • Pesos: Iguales (1.0 para todos los indicadores)\n\n")
+
+cat("🏆 RESULTADOS:\n")
+cat("  • Rango de índice:", round(min(ranking_2025$Score, na.rm = TRUE), 3), 
+    "a", round(max(ranking_2025$Score, na.rm = TRUE), 3), "\n")
+cat("  • Media del índice:", round(mean(ranking_2025$Score, na.rm = TRUE), 3), "\n")
+cat("  • Desv. estándar:", round(sd(ranking_2025$Score, na.rm = TRUE), 3), "\n\n")
+
+if (nrow(ranking_2025) > 0) {
+  best_unit <- ranking_2025$uCode[1]
+  worst_unit <- ranking_2025$uCode[nrow(ranking_2025)]
+  cat("🔍 PRINCIPALES HALLAZGOS:\n")
+  cat("  • Mejor clasificada:", best_unit, 
+      "(Score =", round(ranking_2025$Score[1], 3), ")\n")
+  cat("  • Peor clasificada:", worst_unit, 
+      "(Score =", round(ranking_2025$Score[nrow(ranking_2025)], 3), ")\n")
+  
+  if (exists("correlacion_con_indice") && nrow(correlacion_con_indice) > 0) {
+    cat("  • Indicador más importante:", 
+        correlacion_con_indice$Indicador[1], "\n")
+    cat("    (Correlación:", 
+        round(correlacion_con_indice$Correlacion_con_Indice[1], 3), ")\n\n")
+  }
+}
+
+cat("⚠️  RECOMENDACIONES:\n")
+cat("  • Revisar direcciones de indicadores según conocimiento del dominio\n")
+cat("  • Considerar pesos diferenciados si algunos indicadores son más relevantes\n")
+cat("  • Validar con expertos del dominio\n")
+cat("  • Realizar análisis de sensibilidad variando pesos y metodologías\n")
+```
+
+---
+
+# Documentación y Referencias
+
+- **COINr Official Documentation**: https://bluefoxr.github.io/COINr/
+- **Normalization Methods**: Diferentes opciones en COINr para normalización
+- **Aggregation Approaches**: Media, mediana, media geométrica, máximo mínimo, etc.
+
+---
+
+*Análisis realizado con COINr*
+*Fecha de generación: `r Sys.Date()`*

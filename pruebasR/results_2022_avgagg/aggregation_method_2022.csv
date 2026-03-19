@@ -1,0 +1,2 @@
+"aggregation_method","description","dimensions_used","year"
+"Simple Average","PC1 from each dimension averaged to create composite","ENV_PC1, ECO_PC1, SOC_PC1",2022
