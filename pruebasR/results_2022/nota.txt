@@ -1,0 +1,40 @@
+Archivos del Código 1 (Enfoque Visual y Descriptivo)
+Este código genera muchos archivos pequeños de cargas y los gráficos de resultados.
+
+De las Dimensiones (ECO, ENV, SOC):
+
+loadings_ECO_2022.csv (Contiene las cargas de la PC1 y la PC2).
+
+loadings_ENV_2022.csv.
+
+loadings_SOC_2022.csv.
+
+Del Resultado Final:
+
+composite_indicator_2022.csv: El ranking final (puntuación pura y normalizada 0-100).
+
+loadings_final_2022.csv: Cuánto pesó cada dimensión (ECO, ENV, SOC) en el índice total.
+
+Gráficos (Imágenes PNG):
+
+01_distribution_2022.png: Un histograma de las puntuaciones.
+
+02_rankings_2022.png: Un gráfico de barras con las regiones ordenadas de mejor a peor.
+
+📂 Archivos del Código 2 (Enfoque Explicativo e "Impactos")
+Este código genera los archivos clave para explicar el "porqué" de los datos de cada región.
+
+De las Dimensiones (Los más importantes para tu análisis):
+
+pesos_indicadores_ECO_2022.csv: Solo la carga/peso de la PC1 (el que usas para el índice).
+
+impacto_indicadores_ECO_2022.csv: Este es el nuevo. Te da la tabla de regiones y cuánto sumó cada indicador a su nota.
+
+(Lo mismo para ENV y SOC: impacto_indicadores_SOC_2022.csv, etc.)
+
+Del Resultado Final:
+
+INDICADOR_FINAL_2022.csv: El ranking definitivo (puntuación pura e índice 0-100).
+
+ranking_dimensiones_2022.csv: Una tabla resumen con las "notas" de cada región en las tres dimensiones juntas.
+
