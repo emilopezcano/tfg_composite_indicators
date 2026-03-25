@@ -1,0 +1,352 @@
+---
+title: "indicadores_calculados2016_20242016_2024"
+format: html
+---
+
+```{r librerias}
+library(COINr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(stringr)
+```
+
+```{r retocamos nuestro df para cumplir los requerimientos de COINr}
+#cargo datos
+indicadores_calculados2016_2024 <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/indicadores_calculados2016_2024.rds")
+indicators_meta2016_2024 <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/indicators_meta2016_2024.rds")
+df_indicadores2016_2024_completo <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/df_indicadores2016_2024_completo.rds")
+
+#renombro la columna valor
+indicadores_calculados2016_2024 <- indicadores_calculados2016_2024 |> 
+  rename (value = indicator_value)
+
+#veo si puedo eliminar la variable source, creo q no es necesaria: 
+sum(indicadores_calculados2016_2024$source_id != "EVASTUR", na.rm = TRUE)
+
+#como siempre es la misma fuente, elimino columna. 
+indicadores_calculados2016_2024 <- indicadores_calculados2016_2024 |> select(-source_id)
+
+
+#vemos si todos los indicadores tienen al menos un dato (un valor)
+indicadores_activos <- indicadores_calculados2016_2024 %>%
+  mutate(Year = year(as.Date(date))) %>% # Extraemos el año 
+  pull(indicator_id) %>% # Extraemos solo la columna de IDs
+  unique() # Nos quedamos con los IDs únicos
+
+#verificación rápida
+print(paste("Indicadores detectados con datos:", length(indicadores_activos)))
+
+
+```
+
+# Con todos los años
+```{r nuestro iData}
+#Transformamos a formato ancho (iData)
+# creamos filas por cada combinación de uCode y Time
+
+#preparamos la base
+iData <- indicadores_calculados2016_2024 %>%
+  mutate(Time = year(as.Date(date))) %>%
+  select(
+    uCode = geo_id,       # ID de la región
+    Time,                 # Año
+    indicator_id,         # Se convertirá en nombres de columna
+    value                 # El dato numérico
+  ) |>   pivot_wider(
+    names_from = indicator_id, 
+    values_from = value
+  )
+
+#vemos primeras filas de la bd
+head(iData)
+```
+
+
+```{r nuestro iMeta}
+# Unimos metadatos, pero filtrando solo los activos
+df <- indicators_meta2016_2024 %>%
+  select(-any_of("dimension_id")) %>%
+  left_join(
+    df_indicadores2016_2024_completo %>% 
+      select(indicator_id, dimension_id) %>% 
+      distinct(), 
+    by = "indicator_id"
+  )
+
+
+# --- PASO 1: NIVEL 1 (INDICADORES) ---
+# Creamos la base del iMeta extrayendo los datos descriptivos de tu tabla original
+iMeta_L1 <- df %>%
+  select(
+    iCode = indicator_id,              # Código del indicador (debe coincidir con las columnas de iData) 
+    iName = indicator_original_name,   # Nombre completo para gráficos 
+    Parent = dimension_id,             # El "jefe" de este indicador es su dimensión (Nivel 2) 
+    Direction = indicator_direction,   # Dirección del impacto (+ o -) 
+    Weight = indicator_weight          # Peso asignado 
+  ) %>%
+  # Es vital usar distinct() para que cada indicador aparezca solo UNA vez
+  distinct(iCode, .keep_all = TRUE) %>%
+  mutate(
+    # Convertimos el símbolo "+" o "-" a numérico (1 o -1) como pide el paquete 
+    Direction = ifelse(Direction == "+", 1, -1),
+    # Estos son los datos base, por lo tanto son Nivel 1 
+    Level = 1,
+    # Definimos el tipo como 'Indicator' 
+    Type = "Indicator"
+  )
+
+# --- PASO 2: NIVEL 2 (DIMENSIONES) ---
+# Creamos las filas para las Dimensiones basándonos en los "Parents" del nivel anterior
+iMeta_L2 <- iMeta_L1 %>%
+  select(iCode = Parent) %>%           # Los códigos aquí son los IDs de las dimensiones (ej: ENV, ECO)
+  distinct() %>%
+  mutate(
+    iName = paste("Dimensión:", iCode),# Nombre descriptivo para la dimensión
+    Level = 2,                         # Las dimensiones son el resultado de agregar indicadores 
+    Parent = "TotalIndex",             # Todas las dimensiones suben al Índice Final (Nivel 3) 
+    Direction = 1,                     # Por defecto, las dimensiones siempre suman al índice
+    Weight = 1,                        # Peso por defecto para cada dimensión
+    Type = "Aggregate"                 # Es un agregado, no un indicador base 
+  )
+
+# --- PASO 3: NIVEL 3 (ÍNDICE FINAL) ---
+# Creamos la fila para la punta de la pirámide
+iMeta_L3 <- data.frame(
+  iCode = "TotalIndex",                # Código del índice final
+  iName = "Índice Sintético Regional", # Nombre del índice completo
+  Level = 3,                           # Nivel resultante de agregar las dimensiones 
+  Parent = NA,                         # El nivel superior no tiene padre (es el final) 
+  Direction = 1,
+  Weight = 1,
+  Type = "Aggregate"                   # También es de tipo agregado 
+)
+
+# --- UNIÓN FINAL ---
+# Combinamos los tres niveles en una sola tabla de metadatos coherente
+iMeta_final <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
+```
+
+# creacion purse
+```{r}
+purse <- new_coin(iData=iData,iMeta=iMeta_final, split_to = "all", quietly = TRUE)
+purse
+```
+
+```{r}
+# 1. Extraemos los datos RAW de los 15 años en un solo data frame plano
+# Esto quita la estructura compleja de "purse" y nos da una tabla normal
+df_provisional <- get_dset(purse, dset = "Raw") |> 
+  filter(Time >= 2015)
+
+#para ver IAMB0002: 
+df_iamb0002 <- df_provisional |> select(Time, uCode, IAMB0002)
+View(df_iamb0002)
+
+# 2. Calculamos Min y Max por cada indicador y cada año
+# Quitamos uCode porque es texto y daría error
+stats_10_anios <- df_provisional %>%
+  select(-uCode) %>% 
+  group_by(Time) %>%
+  summarise(across(where(is.numeric), list(
+    min = ~min(.x, na.rm = TRUE),
+    max = ~max(.x, na.rm = TRUE)
+  ), .names = "{.col}_{.fn}")) %>%
+  pivot_longer(
+    cols = -Time,
+    names_to = c("iCode", ".value"),
+    names_pattern = "(.*)_(.*)"
+  )
+
+# 3. FILTRAR INDICADORES CONSTANTES
+# Los que tienen Min == Max son los que darán NaN al normalizar
+indicadores_con_problemas <- stats_10_anios %>%
+  filter(min == max) %>%
+  select(Time, iCode, min, max)
+
+# Ver el resultado
+print(indicadores_con_problemas, n=100)
+
+# 4. LISTA ÚNICA DE NOMBRES (sin duplicados)
+nombres_problematicos <- indicadores_con_problemas %>%
+  pull(iCode) %>%
+  unique()
+
+# Imprimir la lista limpia
+print("Indicadores a revisar:")
+print(nombres_problematicos)
+
+```
+
+
+```{r disponibilidad de datos por indicador}
+# Calculamos la disponibilidad
+disponibilidad <- iData2016_2024 %>%
+  filter(uCode != "ESP") %>%
+  # Calculamos el % de datos no NA para cada columna (excepto uCode y Time)
+  summarise(across(-c(uCode, Time), ~ sum(!is.na(.x)) / n())) %>%
+  # Pasamos a formato largo para que sea una lista
+  pivot_longer(everything(), names_to = "iCode", values_to = "Disponibilidad") %>%
+  # Lo multiplicamos por 100 para que sea porcentaje y redondeamos
+  mutate(Disponibilidad_Pct = round(Disponibilidad * 100, 2)) %>%
+  # Ordenamos para ver primero los que tienen menos datos
+  arrange(Disponibilidad_Pct)
+
+# Imprimimos la tabla completa
+df_disponibilidad_datos <- as.data.frame(disponibilidad)
+View(df_disponibilidad_datos)
+
+indicadores_a_mantener <- disponibilidad |> filter(Disponibilidad_Pct>=20) |> pull(iCode)
+
+#vemos cuales hemos eliminado: 
+eliminados <- disponibilidad |> filter(Disponibilidad_Pct<20) |> pull(iCode)
+print(paste("Indicadores eliminados por baja disponibilidad:", length(eliminados)))
+print(eliminados)
+```
+
+Al df_provisional le elimino esos indicadores.
+```{r}
+df_provisional <- df_provisional |> select(-any_of(eliminados))
+```
+
+Hacemos el iData nuevo con los indicadores problemáticos eliminados: 
+
+#vuelvo a recrear el purse
+```{r}
+iData2016_2024 <- df_provisional
+
+# 1. Sincronizar iMeta
+# Filtramos para que solo queden los indicadores presentes en los datos
+# O aquellos que son niveles superiores (Agregados)
+iMeta_limpio <- iMeta_final %>%
+  filter(iCode %in% colnames(df_provisional) | Level > 1)
+
+# 2. Control de calidad: ¿Se han quedado grupos vacíos?
+# (Opcional pero recomendado para evitar errores en aggregate())
+# COINr suele manejar esto, pero es bueno saber qué queda.
+print(paste("Indicadores en iMeta:", sum(iMeta_limpio$Level == 1)))
+print(paste("Columnas en iData:", ncol(df_provisional) - 2)) # -2 por uCode y Time
+
+# 3. Re-crear el objeto purse
+purse <- new_coin(iData = iData2016_2024, 
+                  iMeta = iMeta_limpio, 
+                  split_to = "all", 
+                  quietly = TRUE)
+
+# Ver el resumen del nuevo objeto
+print(purse)
+```
+
+Para ver de cuántos indicadores tengo datos por región y por año. 
+```{r}
+# Obtenemos los años únicos ordenados
+anios <- sort(unique(df_provisional$Time))
+
+for(anio in anios){
+  cat("\n--- Indicadores que tienen datos en el año:", anio, "---\n")
+  
+  res <- df_provisional %>% 
+    filter(Time == anio) %>% 
+    rowwise() %>% 
+    mutate(datos_reales = sum(!is.na(c_across(-c(uCode, Time))))) %>% 
+    select(uCode, datos_reales)
+  
+  print(res)
+}
+
+resumen_disponibilidad <- df_provisional %>%
+  pivot_longer(cols = -c(uCode, Time), names_to = "indicador", values_to = "valor") %>%
+  group_by(Time, uCode) %>%
+  summarise(total_datos = sum(!is.na(valor)), .groups = "drop") %>%
+  pivot_wider(names_from = Time, values_from = total_datos)
+
+# Esto te dará una matriz: Regiones en filas y Años en columnas
+View(resumen_disponibilidad)
+```
+
+Imputamos 
+```{r}
+# Rellenamos los huecos usando la mediana (f_i = "i_median")
+# Esto se hace año a año automáticamente dentro del purse
+purse <- Impute(purse, dset = "Raw", f_i = "i_median")
+```
+
+Normalizamos: 
+```{r}
+# Usamos global = TRUE para que el "0" y el "100" sean los mismos para todos los años
+# permitiendo comparaciones temporales válidas.
+purse <- Normalise(purse, 
+                   dset = "Imputed", 
+                   global = TRUE, 
+                   f_n = "n_minmax", 
+                   f_n_para = list(l_u = c(0, 100)))
+```
+
+```{r}
+# Calculamos las medias aritméticas según la estructura de tu iMeta
+purse <- Aggregate(purse, dset = "Normalised", f_ag = "a_amean")
+```
+
+```{r}
+# Extraemos la tabla de resultados agregados (Nivel 2 y 3) para todos los años
+resultados_finales <- get_dset(purse, dset = "Aggregated")
+
+# Si solo quieres ver el Índice Final (TotalIndex) y no las dimensiones:
+ranking_temporal <- resultados_finales %>%
+  select(uCode, Time, TotalIndex) %>%
+  arrange(Time, desc(TotalIndex))
+
+View(ranking_temporal)
+```
+
+Resultados por año específico: 
+```{r}
+# 1. Identificamos el último año disponible en tu purse
+ultimo_anio <- tail(names(purse$coin), 1)
+
+# 2. Extraemos los resultados detallados (Índice + Dimensiones)
+res_especifico <- get_results(
+  coin = purse$coin[[ultimo_anio]], 
+  dset = "Aggregated", # <--- Faltaba este argumento
+  tab_type = "Aggs"
+)
+
+# 3. Ver el ranking del último año
+print(paste("Mostrando ranking detallado para el año:", ultimo_anio))
+View(res_especifico)
+
+```
+
+Ejemplo para 2022
+```{r}
+# Extraemos el coin del año 2022
+# (Asegúrate de que 2022 está en tus datos, si no, usa uno que aparezca en Time)
+res_2022 <- get_results(
+  coin = purse$coin[["2022"]], 
+  dset = "Aggregated", 
+  tab_type = "Aggs"
+)
+
+# Ordenamos por el Índice Total de mayor a menor
+res_2022 <- res_2022 %>% arrange(desc(TotalIndex))
+
+# Ver la tabla en una ventana nueva
+View(res_2022)
+```
+
+Gráfico de barras para 2022: 
+```{r}
+ggplot(res_2022, aes(x = reorder(uCode, TotalIndex), y = TotalIndex)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  geom_text(aes(label = round(TotalIndex, 1)), hjust = -0.2, size = 3) + # Añade el valor sobre la barra
+  coord_flip() + # Ponemos las barras horizontales para que se lean mejor los nombres
+  labs(
+    title = "Ranking del Índice Sintético Regional (2022)",
+    subtitle = "Basado en indicadores con disponibilidad > 20%",
+    x = "Región (uCode)",
+    y = "Puntuación (0-100)"
+  ) +
+  theme_minimal() +
+  ylim(0, 110) # Damos espacio para las etiquetas de texto
+```
