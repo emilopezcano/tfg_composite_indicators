@@ -18,6 +18,26 @@ dfvar <- get_ft_data(
 ) |>
   mutate(variable_value_flags = as.character(variable_value_flags))
 
+# Calculamos las agregaciones de provincias a comunidades autónomas y año (en otro script)
+source("R/gen_data_local_prov.R")
+# las unimos
+dfvar <- bind_rows(dfvar, dfvar_prov)
+
+# Calculamos VTRA0009 = VTRA0006+VTRA0008
+
+df_vtra0009 <- dfvar |>
+  filter(variable_id %in% c("VTRA0006", "VTRA0008")) |>
+  pivot_wider(names_from = variable_id, values_from = variable_value) |>
+  mutate(VTRA0009 = VTRA0006 + VTRA0008) |>
+  select(-c(VTRA0006, VTRA0008)) |>
+  pivot_longer(
+    cols = starts_with("VTRA"),
+    names_to = "variable_id",
+    values_to = "variable_value"
+  )
+
+## Lo añadimnos a dfvar
+dfvar <- bind_rows(dfvar, df_vtra0009)
 
 dfvar$imputed[dfvar$variable_value_flags == "{I}"] <- TRUE
 dfvar$variable_value[dfvar$imputed] <- NA
@@ -38,7 +58,7 @@ indicators <- con2 |>
   tbl("dt_indicators") |>
   inner_join(
     tbl(con2, "bt_indicator_subdimension") |>
-      filter(source_id == "EVASTUR") |> 
+      filter(source_id == "EVASTUR") |>
       select(indicator_id, dimension_id),
     by = "indicator_id"
   ) |>
