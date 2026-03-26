@@ -28,7 +28,6 @@ sum(indicadores_calculados2016_2024$source_id != "EVASTUR", na.rm = TRUE)
 #como siempre es la misma fuente, elimino columna. 
 indicadores_calculados2016_2024 <- indicadores_calculados2016_2024 |> select(-source_id)
 
-
 #vemos si todos los indicadores tienen al menos un dato (un valor)
 indicadores_activos <- indicadores_calculados2016_2024 %>%
   mutate(Year = year(as.Date(date))) %>% # Extraemos el año 
@@ -38,7 +37,6 @@ indicadores_activos <- indicadores_calculados2016_2024 %>%
 #verificación rápida
 print(paste("Indicadores detectados con datos:", length(indicadores_activos)))
 
-
 ```
 
 # Con todos los años
@@ -47,7 +45,7 @@ print(paste("Indicadores detectados con datos:", length(indicadores_activos)))
 # creamos filas por cada combinación de uCode y Time
 
 #preparamos la base
-iData <- indicadores_calculados2016_2024 %>%
+iData2016_2024 <- indicadores_calculados2016_2024 %>%
   mutate(Time = year(as.Date(date))) %>%
   select(
     uCode = geo_id,       # ID de la región
@@ -59,8 +57,13 @@ iData <- indicadores_calculados2016_2024 %>%
     values_from = value
   )
 
+#paso los NaN a NA para tenerlo todo igual
+iData2016_2024[do.call(cbind, lapply(iData2016_2024, is.nan))] <- NA
+
 #vemos primeras filas de la bd
-head(iData)
+head(iData2016_2024)
+
+
 ```
 
 
@@ -130,23 +133,22 @@ iMeta_final <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
 
 # creacion purse
 ```{r}
-purse <- new_coin(iData=iData,iMeta=iMeta_final, split_to = "all", quietly = TRUE)
+purse <- new_coin(iData=iData2016_2024,iMeta=iMeta_final, split_to = "all", quietly = TRUE)
 purse
 ```
 
 ```{r}
 # 1. Extraemos los datos RAW de los 15 años en un solo data frame plano
 # Esto quita la estructura compleja de "purse" y nos da una tabla normal
-df_provisional <- get_dset(purse, dset = "Raw") |> 
-  filter(Time >= 2015)
+df_provisional <- get_dset(purse, dset = "Raw")
 
 #para ver IAMB0002: 
-df_iamb0002 <- df_provisional |> select(Time, uCode, IAMB0002)
-View(df_iamb0002)
+#df_iamb0002 <- df_provisional |> select(Time, uCode, IAMB0002)
+#View(df_iamb0002)
 
 # 2. Calculamos Min y Max por cada indicador y cada año
 # Quitamos uCode porque es texto y daría error
-stats_10_anios <- df_provisional %>%
+stats <- df_provisional %>%
   select(-uCode) %>% 
   group_by(Time) %>%
   summarise(across(where(is.numeric), list(
@@ -161,7 +163,7 @@ stats_10_anios <- df_provisional %>%
 
 # 3. FILTRAR INDICADORES CONSTANTES
 # Los que tienen Min == Max son los que darán NaN al normalizar
-indicadores_con_problemas <- stats_10_anios %>%
+indicadores_con_problemas <- stats %>%
   filter(min == max) %>%
   select(Time, iCode, min, max)
 
@@ -350,3 +352,459 @@ ggplot(res_2022, aes(x = reorder(uCode, TotalIndex), y = TotalIndex)) +
   theme_minimal() +
   ylim(0, 110) # Damos espacio para las etiquetas de texto
 ```
+
+
+
+
+
+#Intento de DEA
+```{r seleccion indicadores y mapeo codigos}
+library(dplyr)
+
+# Nombres que quieres usar
+mis_indicadores <- c(
+  "Gasto medio por turista receptor y día",
+  "Gasto medio por turista receptor",
+  "Gasto energético menos contaminante",
+  "Estancia media por turista receptor",
+  "Porcentaje de medios de transporte menos contaminante utilizados por los turistas receptores",
+  "Estancia media por turista interno",
+  "Índice de Percepción Turística Global",
+  "Índice Satisfacción Productos Turísticos",
+  "Índice de Percepción de Seguridad",
+  "Índice de Percepción Climática",
+  "Gasto medio por turista interno y día",
+  "Gasto medio por turista interno",
+  "Índice de satisfacción con los hoteles 5 estrellas",
+  "Tarifa media diaria (ADR)",
+  "Variación interanual tarifa media diaria (ADR)\n",
+  "Ingresos medios por habitación disponible (REVPAR)",
+  "Variación interanual ingresos por habitación disponible (REVPAR)",
+  "Precio medio para hotel 5 estrellas con 3 meses de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 5 estrellas con 1 mes de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 5 estrellas con 2 semanas de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 5 estrellas con 1 semana de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 4 estrellas con 3 meses de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 4 estrellas con 2 semanas de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 4 estrellas con 1 semana de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 3 estrellas con 3 meses de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 3 estrellas con 1 mes de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 3 estrellas con 2 semanas de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 3 estrellas con 1 semana de antelación con fecha de check-in entre semana",
+  "Precio medio para hotel 5 estrellas con 3 meses de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 5 estrellas con 1 mes de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 5 estrellas con 2 semanas de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 5 estrellas con 1 semana de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 4 estrellas con 3 meses de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 4 estrellas con 1 mes de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 4 estrellas con 2 semanas de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 4 estrellas con 1 semana de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 3 estrellas con 3 meses de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 3 estrellas con 1 mes de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 3 estrellas con 2 semanas de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 3 estrellas con 1 semana de antelación con fecha de check-in en fin de semana",
+  "Precio medio para hotel 4 estrellas con 1 mes de antelación con fecha de check-in entre semana",
+  "Índice de Precios Hoteleros (IPH)",
+  "Variacíon anual del Índice de Precios Hoteleros (IPH)",
+  "Índice de satisfacción con los alojamientos hoteleros",
+  "Variación acumulada del IPC de turismo y hostelería",
+  "Variación interanual del IPC de turismo y hostelería",
+  "Variación mensual del IPC de turismo y hostelería",
+  "Índice de precios de turismo y hostelería\n"
+)
+
+# Mapear nombres → códigos reales del dataset
+codigos <- iMeta_limpio %>%
+  filter(iName %in% mis_indicadores) %>%
+  pull(iCode)
+```
+
+```{r definicion inputs y outputs enfoque en sostenibilidad}
+inputs_names <- c(
+  "Gasto energético menos contaminante",
+  "Porcentaje de medios de transporte menos contaminante utilizados por los turistas receptores"
+)
+
+outputs_names <- setdiff(mis_indicadores, inputs_names)
+
+inputs <- iMeta_limpio %>%
+  filter(iName %in% inputs_names) %>%
+  pull(iCode)
+
+outputs <- iMeta_limpio %>%
+  filter(iName %in% outputs_names) %>%
+  pull(iCode)
+```
+
+```{r preparacion datos}
+library(tidyr)
+
+datos_dea <- iData2016_2024 %>%
+  select(Time, uCode, all_of(c(inputs, outputs))) %>%
+  drop_na()
+```
+
+```{r aplico dea por año}
+library(Benchmarking)
+library(dplyr)
+
+resultados_dea <- datos_dea %>%
+  group_by(Time) %>%
+  group_modify(~{
+
+    inputs_mat  <- as.matrix(.x[, inputs])
+    outputs_mat <- as.matrix(.x[, outputs])
+
+    dea_res <- dea(inputs_mat, outputs_mat,
+                   RTS = "vrs",
+                   ORIENTATION = "out")
+
+    tibble(
+      uCode = .x$uCode,
+      DEA_eff = dea_res$eff
+    )
+  }) %>%
+  ungroup()
+```
+
+```{r resultado final dea}
+head(resultados_dea)
+```
+
+Problema: DEA no admite valores NA. Y mira cuantas filas y columnas tenemos con na: 
+```{r}
+colSums(is.na(iData2016_2024))
+sum(rowSums(is.na(iData2016_2024))==0)
+```
+#Intento de DEA con menos índices. 
+```{r}
+# 1. Cargar librerías necesarias
+library(dplyr)
+library(Benchmarking)
+
+# 2. Identificar los códigos (IDs) a partir de los nombres en iMeta_limpio
+# Definimos los nombres que queremos buscar
+nombres_inputs <- c(
+  "Gasto energético menos contaminante", 
+  "Porcentaje de medios de transporte menos contaminante utilizados por los turistas receptores",
+  "Tarifa media diaria (ADR)"
+)
+
+nombres_outputs <- c(
+  "Ingresos medios por habitación disponible (REVPAR)",
+  "Gasto medio por turista receptor y día",
+  "Índice de Percepción Turística Global",
+  "Índice de satisfacción con los alojamientos hoteleros",
+  "Estancia media por turista receptor"
+)
+
+# Extraemos los códigos exactos (IECOXXXX, ISOCXXXX, etc.) de iMeta_limpio
+# (Asegúrate de que la columna con el código en iMeta_limpio se llame 'iID')
+inputs_ids <- iMeta_limpio$iCode[iMeta_limpio$iName %in% nombres_inputs]
+outputs_ids <- iMeta_limpio$iCode[iMeta_limpio$iName %in% nombres_outputs]
+
+# 3. Limpieza y preparación del dataset para DEA
+# Usamos directamente iData2016_2024
+dea_prep <- iData2016_2024 %>%
+  # Nos quedamos con las columnas de identificación y los indicadores seleccionados
+  # Nota: He usado 'Time' y 'uCode' basándome en tu captura de imagen
+  select(Time, uCode, all_of(inputs_ids), all_of(outputs_ids)) %>%
+  # El DEA no admite NAs. 
+  # IMPORTANTE: Si tras la imputación por la mediana todavía quedan filas con NA
+  # en estos indicadores específicos, esta línea las eliminará.
+  na.omit()
+
+# 4. Crear matrices X (Inputs) e Y (Outputs) asegurando que sean numéricas
+# Aplicamos as.numeric a cada columna para limpiar cualquier residuo de texto
+X <- apply(dea_prep[, inputs_ids], 2, function(x) as.numeric(as.character(x)))
+Y <- apply(dea_prep[, outputs_ids], 2, function(x) as.numeric(as.character(x)))
+
+# Cuenta cuántas filas tienen al menos un NA en las variables del DEA
+sum(!complete.cases(iData2016_2024[, c(inputs_ids, outputs_ids)]))
+
+# 5. Ejecutar el modelo DEA (ahora sí debería funcionar)
+modelo_dea <- dea(X, Y, RTS = "vrs", ORIENTATION = "in")
+
+# 6. Guardar los resultados en el dataframe
+dea_prep$eficiencia <- eff(modelo_dea)
+
+# 7. Ver el ranking de eficiencia por región y año
+resultado_final <- dea_prep %>%
+  select(Time, uCode, eficiencia) %>%
+  arrange(desc(eficiencia))
+
+print(head(resultado_final, 20))
+
+# 8. Guardar para el TFG si lo necesitas
+# write.csv(resultado_final, "eficiencia_dea_sostenibilidad.csv", row.names = FALSE)
+```
+
+```{r}
+# 1. Definimos exactamente las 7 variables que van al DEA
+# Asegúrate de que inputs_ids y outputs_ids tengan los códigos (ej. "IECO0001", "ISOC0007"...)
+variables_seleccionadas <- c(inputs_ids, outputs_ids)
+
+# 2. Total de filas en tu tabla iData2016_2024
+total_filas <- nrow(iData2016_2024)
+
+# 3. Contamos cuántas filas tienen los datos completos SOLO en esas 7 variables
+# (Ignoramos los NAs que haya en las otras 41 variables)
+casos_completos_dea <- sum(complete.cases(iData2016_2024[, variables_seleccionadas]))
+
+# 4. Resultado claro para tu TFG
+cat("Análisis de la muestra para el modelo DEA (7 variables):\n")
+cat("------------------------------------------------------\n")
+cat("Unidades totales (Región-Año):      ", total_filas, "\n")
+cat("Unidades con datos en las 7 vars:   ", casos_completos_dea, "\n")
+cat("Unidades que requieren imputación:  ", total_filas - casos_completos_dea, "\n")
+```
+
+
+Imputamos por la mediana para tener las 7 variables para los 180 casos. 
+```{r}
+# 1. Crear una copia de seguridad de los datos para no machacar el original
+iData_DEA_Final <- iData2016_2024
+
+# 2. Imputar NAs con la mediana (Solo para las 7 variables del DEA)
+variables_7 <- c(inputs_ids, outputs_ids)
+
+for(col in variables_7) {
+  # Calculamos la mediana del indicador (ignorando los NAs existentes)
+  valor_mediana <- median(iData_DEA_Final[[col]], na.rm = TRUE)
+  
+  # Sustituimos los NAs de esa columna por su mediana
+  iData_DEA_Final[[col]][is.na(iData_DEA_Final[[col]])] <- valor_mediana
+}
+
+# 3. Verificación de seguridad (Debería salir 180 ahora)
+casos_post_imputacion <- sum(complete.cases(iData_DEA_Final[, variables_7]))
+cat("Unidades recuperadas para el DEA:", casos_post_imputacion, "de 180\n")
+
+# 4. Preparar matrices (Asegurando que sean numéricas y sin ceros)
+X <- as.matrix(iData_DEA_Final[, inputs_ids])
+Y <- as.matrix(iData_DEA_Final[, outputs_ids])
+
+# El DEA no se lleva bien con el 0 absoluto (por si la mediana fuera 0)
+X[X <= 0] <- 0.0001
+Y[Y <= 0] <- 0.0001
+
+# 5. LANZAR EL DEA (Por fin)
+library(Benchmarking)
+modelo_dea <- dea(X, Y, RTS = "vrs", ORIENTATION = "in")
+
+# 6. Añadir el resultado de eficiencia al dataframe
+iData_DEA_Final$eficiencia <- eff(modelo_dea)
+
+# 7. Ver el "Top 10" de destinos sostenibles
+ranking <- iData_DEA_Final %>%
+  select(Time, uCode, eficiencia) %>%
+  arrange(desc(eficiencia))
+
+print(ranking)
+```
+Conclusión: Los resultados del análisis DEA revelan una dualidad en la eficiencia turística española. Mientras destinos como Madrid (ES-MD) y Canarias (ES-CN) muestran una resiliencia estructural manteniéndose en la frontera de eficiencia (1.0) en la mayoría del periodo, se observa un impacto severo derivado de la crisis sanitaria.
+
+El valor mínimo de eficiencia registrado (0.852 en Canarias, 2020) ilustra la incapacidad del sistema para ajustar los inputs de sostenibilidad ante una caída abrupta de los outputs económicos. Por otro lado, regiones del norte como Asturias (ES-AS) y Galicia (ES-GA) emergen en los años más recientes (2023-2024) como nuevos referentes de eficiencia, sugiriendo un cambio en la tendencia hacia un turismo menos masificado pero más optimizado.
+
+```{r}
+# 1. Calcular las holguras (slacks) del modelo ya ejecutado
+# El objeto 'modelo_dea' debe existir previamente
+holguras <- slack(X, Y, modelo_dea)
+
+# 2. Extraer las matrices de slacks para inputs (sx) y outputs (sy)
+# sx: Exceso de recursos (Cuánto debería haber ahorrado)
+# sy: Defecto de resultados (Cuánto le faltó producir)
+matriz_slacks_X <- holguras$sx
+matriz_slacks_Y <- holguras$sy
+
+# 3. Darles nombres claros para que sepas qué es cada cosa
+colnames(matriz_slacks_X) <- paste0("Exceso_", iMeta_limpio$iName[iMeta_limpio$iCode %in% inputs_ids])
+colnames(matriz_slacks_Y) <- paste0("Falta_", iMeta_limpio$iName[iMeta_limpio$iCode %in% outputs_ids])
+
+# 4. Unir todo en un dataframe final para análisis
+df_diagnostico <- cbind(
+  iData_DEA_Final[, c("Time", "uCode", "eficiencia")],
+  matriz_slacks_X,
+  matriz_slacks_Y
+)
+
+# 5. Filtrar solo las unidades ineficientes (eficiencia < 1) 
+# Los que tienen 1 siempre tendrán slacks de 0.
+diagnostico_ineficientes <- df_diagnostico %>%
+  filter(eficiencia < 1) %>%
+  arrange(eficiencia)
+
+# Ver el diagnóstico
+print(diagnostico_ineficientes)
+```
+Para la construcción del modelo de Análisis Envolvente de Datos (DEA), se han seleccionado siete indicadores estratégicos que capturan la naturaleza multidimensional de la sostenibilidad turística. Como inputs o variables de entrada, que representan el esfuerzo y los recursos invertidos por el destino, se han definido: el Gasto energético menos contaminante (como proxy de eficiencia ambiental), el Porcentaje de medios de transporte menos contaminante (como indicador de movilidad sostenible) y la Tarifa media diaria (ADR) (que representa el coste económico de la oferta). Por otro lado, como outputs o variables de salida, que miden el retorno y el éxito del modelo turístico, se han integrado: el Gasto medio por turista y día, el REVPAR (Ingresos por habitación disponible), la Estancia media y el Índice de Percepción Turística Global. Esta combinación permite evaluar no solo la rentabilidad económica del destino, sino también su capacidad para generar satisfacción en el visitante y optimizar el uso de energías limpias, ofreciendo una visión integral de la eficiencia bajo criterios de sostenibilidad.
+
+4. Análisis de Resultados: Eficiencia y Holguras (DEA)
+4.1. Análisis de la Frontera de Eficiencia
+
+El modelo DEA aplicado bajo el supuesto de Rendimientos Variables a Escala (VRS) y orientación al input ha permitido identificar las unidades territoriales-temporales que definen la frontera de eficiencia en sostenibilidad turística en España. De las 180 observaciones analizadas, un total de 44 unidades (24.4%) se sitúan en la frontera con una puntuación de 1.00, actuando como referentes o benchmarks para el resto del sistema.
+
+Destaca la consistencia de regiones como Madrid (ES-MD), Canarias (ES-CN) y Asturias (ES-AS), que logran posicionarse en la frontera en la mayoría de los años del periodo 2016-2024. No obstante, se observa una degradación significativa de la eficiencia en los años 2020 y 2021, coincidiendo con la crisis sanitaria del COVID-19. El valor mínimo de eficiencia se registra en Canarias en 2020 (0.852), lo que indica que, dada la estructura de recursos e infraestructura mantenida, la región operó con un 14.8% de ineficiencia técnica debido al desplome de los flujos turísticos.
+4.2. Diagnóstico de Ineficiencias mediante Slacks (Holguras)
+
+El análisis de las holguras (slacks) permite profundizar en las causas específicas por las cuales las regiones no alcanzan la frontera de eficiencia. Este diagnóstico desglosa si la ineficiencia proviene de un uso excesivo de recursos (Inputs) o de una generación insuficiente de beneficios (Outputs).
+A. Análisis de los Inputs (Excesos)
+
+    Eficiencia Energética: Es altamente reseñable que el "Gasto energético menos contaminante" presenta valores de holgura nulos (0.00) en prácticamente todas las unidades ineficientes. Esto sugiere que el consumo de energía limpia en España está correctamente dimensionado respecto a la producción turística; la ineficiencia no radica en un "desperdicio" de este recurso.
+
+    Movilidad Sostenible: Se detectan excesos críticos en el "Porcentaje de medios de transporte menos contaminantes", especialmente en regiones de gran volumen como Cataluña (ES-CT) y Andalucía (ES-AN). Por ejemplo, en Cataluña (2024), se identifica un exceso de 5.03 puntos en el uso de transporte contaminante en relación con sus niveles de satisfacción.
+
+    Gestión de Precios (ADR): En destinos insulares como Baleares (ES-IB) y Canarias (ES-CN) durante 2021, el modelo identifica un exceso en la Tarifa Media Diaria (ADR) de aproximadamente 10€. Esto indica que los precios aplicados fueron superiores a lo que el mercado "validó" en términos de estancia y percepción global.
+
+B. Análisis de los Outputs (Déficits)
+
+    Retención del Turista (Estancia Media): El déficit más recurrente en todas las regiones ineficientes es la Estancia Media, con faltas que oscilan entre 1.5 y 5.6 días. Esto demuestra que el principal reto de la eficiencia turística española es el aumento de la duración del viaje; las regiones están invirtiendo recursos (inputs) que no se traducen en estancias lo suficientemente prolongadas para optimizar el sistema.
+
+    Percepción y Valor Añadido: El Índice de Percepción Turística Global muestra "faltas" significativas en los años post-pandemia. Destaca el caso de Aragón (2019) o Baleares (2020), donde a pesar de la inversión, la percepción del turista se situó por debajo del nivel eficiente, penalizando la puntuación global de la región.
+
+5. Discusión y Propuestas
+
+Los resultados sugieren que España posee un sector turístico con una eficiencia media-alta (la mayoría de los valores superan el 0.90), pero con una vulnerabilidad estructural ante shocks externos. La persistencia de holguras en la Estancia Media y el Transporte indica que las políticas de sostenibilidad deben virar desde la mera captación de volumen hacia la mejora de la movilidad compartida/limpia y la fidelización para estancias largas.
+
+Para las regiones con puntuaciones inferiores a 0.90, la estrategia recomendada no es necesariamente reducir el gasto energético, sino reorientar el modelo de transporte y ajustar la relación calidad-precio (ADR) para recuperar los niveles de satisfacción y pernoctación que marcan los destinos líderes de la frontera.
+
+#BOD
+es un caso particular de DEA, solo tiene outputs. pq todas las variables son "buenas"
+```{r}
+# 1. Identificamos qué indicadores pertenecen a cada dimensión
+# (Asumimos que dimension_id tiene valores como 'Económica', 'Ambiental', 'Social')
+dimensiones_unicas <- unique(df_indicadores2016_2024_completo$dimension_id)
+
+# 2. Función optimizada para calcular el Índice BoD por pilar
+calcular_indice_pilar <- function(nombre_dimension, df_meta, df_datos) {
+  # Buscamos los IDs que pertenecen a esa dimensión
+  ids_pilar <- df_meta$indicator_id[df_meta$dimension_id == nombre_dimension]
+  
+  # Filtramos solo los que realmente están en nuestra tabla de datos del DEA
+  ids_validos <- intersect(ids_pilar, colnames(df_datos))
+  
+  # Seleccionamos y limpiamos
+  matriz_pilar <- df_datos[, ids_validos]
+  for(col in colnames(matriz_pilar)) {
+    matriz_pilar[is.na(matriz_pilar[,col]), col] <- median(matriz_pilar[,col], na.rm = TRUE)
+  }
+  
+  # Modelo BoD (DEA con Input constante = 1)
+  X_constante <- matrix(1, nrow = nrow(matriz_pilar), ncol = 1)
+  Y_pilar <- as.matrix(matriz_pilar)
+  Y_pilar[Y_pilar <= 0] <- 1e-6 # Evitar ceros
+  
+  modelo_bod <- dea(X_constante, Y_pilar, RTS = "vrs", ORIENTATION = "in")
+  return(eff(modelo_bod))
+}
+
+# 3. Calculamos los índices para cada dimensión existente
+for(dim in dimensiones_unicas) {
+  nombre_columna <- paste0("Indice_", gsub(" ", "_", dim))
+  iData_DEA_Final[[nombre_columna]] <- calcular_indice_pilar(dim, df_indicadores2016_2024_completo, iData_DEA_Final)
+  cat("Calculado índice para:", dim, "\n")
+}
+
+# 4. El DEA Final: Usamos los Índices como Outputs
+# Seleccionamos las columnas que acabamos de crear (empiezan por 'Indice_')
+outputs_indices <- grep("^Indice_", colnames(iData_DEA_Final), value = TRUE)
+
+X_final <- as.matrix(iData_DEA_Final[, inputs_ids]) # Tus 3 inputs originales
+Y_final <- as.matrix(iData_DEA_Final[, outputs_indices])
+
+modelo_brillante <- dea(X_final, Y_final, RTS = "vrs", ORIENTATION = "in")
+
+# 5. Guardamos el resultado final
+iData_DEA_Final$eficiencia_global_BoD <- eff(modelo_brillante)
+```
+
+```{r}
+# Creamos un dataframe de resultados limpio
+resultados_brillantes <- iData_DEA_Final %>%
+  select(Time, uCode, eficiencia_global_BoD, Indice_ECO, Indice_ENV, Indice_SOC) %>%
+  arrange(desc(eficiencia_global_BoD))
+
+
+# Vemos los 20 mejores
+head(resultados_brillantes, 20)
+print(resultados_brillantes)
+```
+
+Imprimo por año: 
+```{r}
+# 1. Aseguramos que los años estén ordenados
+años_disponibles <- sort(unique(resultados_brillantes$Time))
+
+# 2. Bucle para imprimir cada año con un formato legible
+for (año in años_disponibles) {
+  cat("\n==============================================================\n")
+  cat("   RANKING DE EFICIENCIA GLOBAL - AÑO:", año, "\n")
+  cat("==============================================================\n")
+  
+  # Filtramos los datos del año actual y ordenamos por eficiencia
+  datos_año <- resultados_brillantes %>%
+    filter(Time == año) %>%
+    arrange(desc(eficiencia_global_BoD))
+  
+  # Imprimimos la tabla
+  print(datos_año)
+  cat("\n")
+}
+```
+OJO: en el modelo BoD, todos los outputs se consideran deseables. No hay una inversión de recursos para obtener un resultado; simplemente hay una lista de indicadores de éxito o bienestar que queremos agregar en una sola nota.
+
+1. La lógica del "Solo Outputs"
+
+En un DEA normal, tú dices: "He gastado X para obtener Y". En el BoD, tú dices: "Tengo todos estos indicadores positivos (PIB, Pernoctaciones, Reciclaje, Satisfacción) y quiero saber quién es el mejor en el conjunto".
+
+    Tratamiento matemático: El BoD "engaña" al software DEA diciéndole que todas las regiones han gastado exactamente lo mismo (Input constante = 1).
+
+    Consecuencia: Como el "gasto" es igual para todos, la diferencia en la nota final solo depende de qué tan altos sean sus Outputs (tus 48 indicadores).
+
+2. ¿Por qué tratarlos a todos como Outputs es "Bueno"?
+
+Al tratar los 48 indicadores como outputs en el primer paso:
+
+    Reconoces el valor de cada dato: No penalizas a una región por tener mucho de algo (como podrías hacer con un input), sino que premias que destaque en cualquier indicador.
+
+    Maximizas el potencial: El BoD busca el "perfil ideal" de cada provincia. Si tratáramos algunos de esos 48 como inputs sin estar seguros, podríamos estar castigando a una región por algo que en realidad es un éxito social o ambiental.
+
+3. El "Puente" hacia tu modelo final
+
+Lo "brillante" de lo que hemos hecho es que hemos usado dos lógicas distintas en el mismo trabajo:
+
+    Etapa BoD (Los 48 indicadores): Aquí todos son Outputs. Queremos ver qué tan "bien" lo hace cada región en las dimensiones Económica, Ambiental y Social de forma aislada. Por eso casi todos te salen con un 1.0.
+
+    Etapa DEA (Los 3 Pilares vs. Energía/Precio): Aquí recuperamos la lógica económica. Los 3 pilares (que ya resumen los 48 indicadores) actúan como Outputs, pero ahora sí los enfrentamos a los Inputs (lo que ha costado llegar ahí).
+
+Conclusión de todo esdte modelo "brillante": El Modelo de Eficiencia en Dos Etapas: ¿Cómo funciona?
+
+Ejemplo para entender lo que vamos a hacer: queremos evaluar qué tan buenos son los alumnos de una clase. En lugar de mirar solo una nota, miramos 48 deberes distintos divididos en tres asignaturas (Económica, Ambiental y Social). El problema es que algunos alumnos son mejores en unos deberes y otros en otros. Para ser justos, diseñamos un proceso en dos pasos:
+Paso 1: El "Beneficio de la Duda" (Construcción de los Pilares)
+
+En este primer paso, el modelo analiza los 48 indicadores agrupados en sus tres dimensiones (ECO, ENV, SOC). Aquí aplicamos la lógica del Benefit of the Doubt (BoD).
+
+    ¿Qué hace? El modelo es "generoso" y busca, para cada región, la combinación de pesos que mejor le siente. Si una comunidad es excelente reciclando pero mala ahorrando agua, el modelo le da más importancia al reciclaje para que su nota en la "Dimensión Ambiental" sea la más alta posible.
+
+    El Resultado: Como vemos en los datos, casi todas las regiones alcanzan una puntuación de 1.0 (el máximo) en sus pilares. Esto significa que, bajo su mejor perfil posible, todas las regiones españolas han logrado alcanzar la excelencia o un desempeño muy alto en los resultados de sostenibilidad.
+
+Paso 2: El Análisis de Eficiencia (Gasto vs. Resultados)
+
+Una vez que sabemos que todas las regiones pueden llegar al "1.0" en resultados (los Pilares), nos hacemos la pregunta clave: ¿A qué coste lo consiguen? Aquí es donde entran los Inputs (Gasto Energético y Precio/ADR).
+
+    ¿Qué hace? Comparamos a las regiones que tienen un "1.0" en sus pilares. Si la Región A logra esos dieces gastando muy poca energía y con precios competitivos, y la Región B logra los mismos dieces pero gastando el doble de energía, la Región B es ineficiente.
+
+    El Resultado Final (eficiencia_global_BoD): Esta es la nota que ves en tu tabla.
+
+        Si tienes un 1.0, eres un referente: logras la máxima sostenibilidad con el mínimo recurso.
+
+        Si tienes un 0.80, significa que eres un 20% ineficiente: tus resultados son buenos, pero estás "pagando" demasiado (en dinero o energía) para conseguirlos.
+
+Resumen para tu Conclusión
+
+Lo que este modelo demuestra es que el sector turístico español no tiene un problema de "qué resultados obtiene" (ya que casi todos logran el 1.0 en los pilares gracias al beneficio de la duda), sino de "cómo los gestiona".
+
+La diferencia entre ser eficiente o no en tu TFG ya no depende de si el turista está contento o no (Outputs), sino de si la región es capaz de mantener esa felicidad del turista sin derrochar energía ni inflar los precios (Inputs).
+
+
+

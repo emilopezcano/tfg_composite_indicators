@@ -7,7 +7,7 @@ library(tidyverse)
 
 dfvar2016_2024 <- get_ft_data(
   data_type = "variable",
-  .nuts_level = 3, #RECORDAR NUTS=3 SON PROVINCIAS; NUTS=2 SON CCAA
+  .nuts_level = 2, #RECORDAR NUTS=3 SON PROVINCIAS; NUTS=2 SON CCAA
   type_id = tbl(con2, "dt_variables") |>
     distinct(variable_id) |>
     pull(variable_id),
