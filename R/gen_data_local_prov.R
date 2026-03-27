@@ -15,14 +15,14 @@ dfvar_prov <- get_ft_data(
   filter(stringr::str_starts(source_id, "ISTAC", negate = TRUE))
 
 ## Comunidades y ciudades autónomas
-ccaa <- con |>
+ccaa <- con2 |>
   tbl("dt_geo") |>
   filter(nuts_level == 2, country_iso2_code == "ES") |>
   select(geo_id_ccaa = geo_id, nuts2_code) |>
   collect()
 
 ## Provincias, quitando las islas que dan datos por provincia y no por isla.
-prov <- con |>
+prov <- con2 |>
   tbl("dt_geo") |>
   filter(
     nuts_level == 3,
