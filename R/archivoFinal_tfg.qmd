@@ -1287,7 +1287,6 @@ Los resultados obtenidos muestran coeficientes de α=0.4711, β=0.3950 y δ=0.40
 Este enfoque garantiza que las dimensiones cuyos indicadores presentan una mayor cohesión estadística (menor dispersión informativa) tengan una mayor relevancia en el índice compuesto, dotando al ranking final de una mayor robustez matemática al capturar la totalidad de la varianza de los datos.
 
 ## CASO 5: PCA/FA manual OCDE
-
 ```{r caso5_pesos_ocde}
 # Función que calcula pesos OCDE para una dimensión (ECO, SOC o ENV)
 calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref, indicadores_eco = NULL) {
