@@ -1330,7 +1330,7 @@ calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref, indicadores_eco = NULL
     mutate(Weight_in_Factor = Carga^2 / sum(Carga^2)) %>%
     ungroup()
   
-  # Ponderación por varianza explicada de cada factor (alpha, beta, delta)
+  # Ponderación por varianza explicada de cada factor
   var_explicada <- rotacion$Vaccounted["Proportion Var", ]
   var_relativa <- var_explicada / sum(var_explicada)
   
