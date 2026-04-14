@@ -1289,24 +1289,29 @@ Este enfoque garantiza que las dimensiones cuyos indicadores presentan una mayor
 ## CASO 5: PCA/FA manual OCDE
 
 ```{r caso5_pesos_ocde}
-# Agrupación por factores rotados (Varimax)
+# Función que calcula pesos OCDE para una dimensión (ECO, SOC o ENV)
 calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref, indicadores_eco = NULL) {
   
-  # 1. Seleccionamos indicadores de la dimensión
+  # 1. Seleccionamos indicadores que pertenecen a la dimensión
   inds_dim <- iMeta_ref %>% filter(Level == 1, Parent == dim) %>% pull(iCode)
   df_dim <- df_datos %>% select(any_of(inds_dim))
+  
+  # En ECO usamos los no redundantes
   if (dim == "ECO" && !is.null(indicadores_eco)) {
     df_dim <- df_dim %>% select(any_of(indicadores_eco))
   }
+  
+  # Eliminamos variables con varianza 0 (necesario para el PCA)
   df_dim <- df_dim %>% select(where(~ var(.x, na.rm = TRUE) > 1e-10))
   
   # 2. Determinamos cuántos componentes retener (Criterio OCDE: Eigenvalue > 1)
   pca_previo <- prcomp(df_dim, center = TRUE, scale. = TRUE)
   n_factores <- sum(pca_previo$sdev^2 > 1)
   
-  # Si solo sale 1 factor, no se puede rotar, usamos el PCA simple
+  # Si solo sale 1 factor, no se puede rotar, usamos el PCA simple (los pesos 
+  # se obtienen directamente de las cargas del primer componente)
   if (n_factores < 2) {
-    loadings_pc1 <- abs(pca_previo$rotation[, 1])
+    loadings_pc1 <- abs(pca_previo$rotation[, 1]) # importancia de cada indicador
     pesos <- loadings_pc1^2 / sum(loadings_pc1^2) # OCDE usa cuadrados de cargas
     return(tibble(iCode = names(pesos), Weight_OCDE = pesos, Factor = "F1", Var_Factor = 1))
   }
@@ -1315,39 +1320,43 @@ calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref, indicadores_eco = NULL
   # Usamos la función principal del paquete psych
   rotacion <- psych::principal(df_dim, nfactors = n_factores, rotate = "varimax")
   
-  # 4. Agrupamos indicadores por su carga máxima (Paso 4 del manual)
+  # 4. Asignamos cada indicador al factor donde más carga tiene (Paso 4 del manual)
   loadings_mat <- as.data.frame(unclass(rotacion$loadings))
   cargas_maximas <- loadings_mat %>%
     mutate(iCode = rownames(.),
            Factor_Asignado = colnames(loadings_mat)[apply(loadings_mat, 1, which.max)])
   
   # 5. Calculamos pesos intermedios y finales
-  # cuadrado de la carga / suma de cuadrados del grupo
   pesos_finales <- cargas_maximas %>%
     pivot_longer(cols = starts_with("RC"), names_to = "Factor", values_to = "Carga") %>%
     filter(Factor == Factor_Asignado) %>%
     group_by(Factor) %>%
-    mutate(Weight_in_Factor = Carga^2 / sum(Carga^2)) %>%
+    mutate(
+      # Peso relativo dentro del grupo (indicadores más importantes pesan más)
+      Weight_in_Factor = Carga^2 / sum(Carga^2)) %>%
     ungroup()
   
-  # Ponderación por varianza explicada de cada factor
+ # Calculamos la importancia de cada factor (varianza explicada)
   var_explicada <- rotacion$Vaccounted["Proportion Var", ]
   var_relativa <- var_explicada / sum(var_explicada)
   
+# Peso final = peso dentro del factor x importancia del factor
   pesos_finales <- pesos_finales %>%
     mutate(Var_Factor = as.numeric(var_relativa[Factor]),
            Weight_OCDE = Weight_in_Factor * Var_Factor)
   
+# Devolvemos pesos finales por indicador
   return(pesos_finales %>% select(iCode, Weight_OCDE, Factor, Var_Factor))
 }
 
-# Aplicamos a todas las dimensiones
+# Aplicamos la función a las 3 dimensiones
 pesos_ocde_L1 <- map_df(c("ECO", "SOC", "ENV"), function(d) {
   res <- calcular_pesos_ocde(d, df_norm_todos, iMeta, indicadores_eco_finales)
   res$Dimension <- d
   res
 })
 
+# Mostramos resultados ordenados
 print(pesos_ocde_L1 %>% arrange(Dimension, Factor, desc(Weight_OCDE)), n = 39)
 
 # La suma de los pesos debería darnos 1 
