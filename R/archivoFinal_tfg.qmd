@@ -1358,8 +1358,11 @@ pesos_ocde_L1 <- map_df(c("ECO", "SOC", "ENV"), function(d) {
 # Mostramos resultados ordenados
 print(pesos_ocde_L1 %>% arrange(Dimension, Factor, desc(Weight_OCDE)), n = 39)
 
-# La suma de los pesos debería darnos 1 
+# La suma de los pesos debería darnos 1  
 cat("Suma total de pesos OCDE:", sum(pesos_ocde_L1$Weight_OCDE), "\n")
+
+pesos_ocde_L1 %>% group_by(Dimension) %>%
+  summarise(suma = sum(Weight_OCDE))
 ```
 
 Calculamos el ranking final con el método de la OCDE PCA/FA: 
@@ -1406,7 +1409,7 @@ Análisis de pesos y resultados de 2024 (como ejemplo):
 
 -Corrección de sesgos: regiones con alta densidad turística pero menor desempeño relativo en indicadores de sostenibilidad ambiental "pura" ven ajustada su posición al repartirse los pesos de forma más equitativa entre los factores rotados.
 
-Es el caso que mejor captura la realidad multidimensional de la sostenibilidad turística, al evitar que grupos de indicadores similares capten el peso total del índice mediante la agrupación por factores independientes.»
+Es el caso que mejor captura la realidad multidimensional de la sostenibilidad turística, al evitar que grupos de indicadores similares capten el peso total del índice mediante la agrupación por factores independientes.
 
 # COMPARATIVA RESULTADOS (RANKING)
 Ejemplo de resultados para 2024
