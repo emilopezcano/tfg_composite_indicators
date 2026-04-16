@@ -1428,7 +1428,7 @@ comp_caso3 <- df_ranking_zscore |>
   select(uCode = CCAA, Time = Year, Caso3 = Rank)
 
 comp_caso4 <- df_STI |> 
-  select(uCode, Time, Caso4 = Rank)
+  select(uCode = CCAA, Time = Year, Caso4 = Rank)
 
 comp_caso5 <- df_STI_OCDE |> 
   select(uCode = CCAA, Time = Año, Caso5 = Posicion)
