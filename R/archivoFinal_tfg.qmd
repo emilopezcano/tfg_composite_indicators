@@ -1112,9 +1112,9 @@ for (a in sort(unique(df_ranking_zscore$Year))) {
 anio_comparar <- 2022
 
 # Por si le damos a run al caso 3 sin haber runneado el caso 1 antes (que lo necesitamos para comparar esos dos casos)
-if (!exists("df_scores_amean")) stop("Ejecuta primero el Caso 1.")
+if (!exists("df_rankings")) stop("Ejecuta primero el Caso 1.")
 
-df_comparacion_norm <- df_scores_amean |>
+df_comparacion_norm <- df_rankings |>
   filter(Time == anio_comparar) |>
   left_join(
     df_scores_zscore_amean |> filter(Time == anio_comparar),
@@ -1544,7 +1544,7 @@ La columna SD_Metodos mide la volatilidad: un valor bajo indica que la región e
 ```{r scores_raw_por_caso}
 
 # Extraemos scores de cada caso
-scores_caso1 <- df_scores_amean |>
+scores_caso1 <- df_ranking |>
   select(uCode, Time, Caso1 = Score_Amean)
 
 scores_caso2 <- df_ranking_ponderado |>
