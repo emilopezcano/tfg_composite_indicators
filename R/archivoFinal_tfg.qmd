@@ -1498,7 +1498,6 @@ df_comparativa_total |>
   scale_y_reverse(breaks = 1:19) + # El 1 arriba
   theme_minimal() +
   labs(title = "Volatilidad de las CCAA según el Método de Agregación (2024)",
-       subtitle = "Cada línea es una CCAA: ver cómo cambia su posición según el caso",
        y = "Posición en el Ranking")
 ```
 
