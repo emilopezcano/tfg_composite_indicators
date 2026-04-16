@@ -1,0 +1,661 @@
+---
+title: "intento solucionar normalización min max archivoFinal_ImpAmelia"
+format: html
+---
+
+```{r librerias, message=FALSE, warning=FALSE}
+library(COINr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(stringr)
+library(Benchmarking)
+```
+
+```{r retocamos nuestro df para cumplir los requerimientos de COINr}
+# 1. Cargo datos
+indicadores_calculados_final_ImpAmelia <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/cindicators_ImpAmelia_no2020.rds")
+indicators_ImpAmelia_meta_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/indicators_ImpAmelia_no2020.rds")
+df_indicadoresImpAmelia_completo_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/df_indicadoresImpAmelia_completo_no2020.rds")
+
+# 2. Renombro la columna valor y elimino source_id
+indicadores_calculados_final_ImpAmelia <- indicadores_calculados_final_ImpAmelia |> 
+  rename(value = indicator_value) |> 
+  select(-source_id)
+
+# 3. Verificación rápida
+indicadores_activos_ImpAmelia <- indicadores_calculados_final_ImpAmelia %>%
+  mutate(Year = year(as.Date(date))) %>% 
+  pull(indicator_id) %>% 
+  unique() 
+
+print(paste("Indicadores detectados con datos:", length(indicadores_activos_ImpAmelia)))
+```
+
+
+# Con todos los años
+```{r nuestro iData}
+# Transformamos a formato ancho (iData)
+iData_ImpAmelia <- indicadores_calculados_final_ImpAmelia %>%
+  mutate(Time = year(as.Date(date))) %>%
+  select(uCode = geo_id, Time, indicator_id, value) |> 
+  pivot_wider(names_from = indicator_id, values_from = value)
+
+# Paso los NaN a NA para tenerlo todo igual
+iData_ImpAmelia[do.call(cbind, lapply(iData_ImpAmelia, is.nan))] <- NA
+
+head(iData_ImpAmelia)
+```
+
+
+#pruebas
+```{r}
+# 2. Calculamos Min y Max por cada indicador y cada año
+# Quitamos uCode porque es texto y daría error
+stats_ImpAmelia <- iData_ImpAmelia %>%
+  select(-uCode) %>% 
+  group_by(Time) %>%
+  summarise(across(where(is.numeric), list(
+    min = ~min(.x, na.rm = TRUE),
+    max = ~max(.x, na.rm = TRUE)
+  ), .names = "{.col}_{.fn}")) %>%
+  pivot_longer(
+    cols = -Time,
+    names_to = c("iCode", ".value"),
+    names_pattern = "(.*)_(.*)"
+  )
+
+# 3. FILTRAR INDICADORES CONSTANTES
+# Los que tienen Min == Max son los que darán NaN al normalizar
+indicadores_con_problemas_ImpAmelia <- stats_ImpAmelia %>%
+  filter(min == max) %>%
+  select(Time, iCode, min, max)
+
+# Ver el resultado
+print(indicadores_con_problemas_ImpAmelia, n=100)
+
+# 4. LISTA ÚNICA DE NOMBRES (sin duplicados)
+nombres_problematicos_ImpAmelia <- indicadores_con_problemas_ImpAmelia %>%
+  pull(iCode) %>%
+  unique()
+
+# Imprimir la lista limpia
+print("Indicadores a revisar:")
+print(nombres_problematicos_ImpAmelia)
+```
+[1] "Indicadores a revisar incluyendo 2020: nos dan problema 11 en total"
+ [1] "IAMB0003" "IAMB0005" "IECO0012" "IECO0013" "ISOC0004" "IAMB0002" "IAMB0006"
+ [8] "IAMB0007" "IECO0001" "IECO0002" "IECO0005"
+ 
+ EXCLUYENDO 2020: [1] "Indicadores a revisar: nos dan problema 5 en total (pero donde está IAMB0004? creo que tambien habría que eliminarlo pq no tiene datos"
+[1] "IAMB0003" "IAMB0005" "IECO0012" "IECO0013" "ISOC0004"
+ 
+
+```{r disponibilidad_ImpAmelia de datos por indicador}
+# Calculamos la disponibilidad_ImpAmelia
+disponibilidad_ImpAmelia <- iData_ImpAmelia %>%
+  filter(uCode != "ESP") %>%
+  # Calculamos el % de datos no NA para cada columna (excepto uCode y Time)
+  summarise(across(-c(uCode, Time), ~ sum(!is.na(.x)) / n())) %>%
+  # Pasamos a formato largo para que sea una lista
+  pivot_longer(everything(), names_to = "iCode", values_to = "disponibilidad_ImpAmelia") %>%
+  # Lo multiplicamos por 100 para que sea porcentaje y redondeamos
+  mutate(disponibilidad_ImpAmelia_Pct = round(disponibilidad_ImpAmelia * 100, 2)) %>%
+  # Ordenamos para ver primero los que tienen menos datos
+  arrange(disponibilidad_ImpAmelia_Pct)
+
+# Imprimimos la tabla completa
+df_disponibilidad_ImpAmelia_datos <- as.data.frame(disponibilidad_ImpAmelia)
+View(df_disponibilidad_ImpAmelia_datos)
+
+indicadores_a_mantener_ImpAmelia <- disponibilidad_ImpAmelia |> filter(disponibilidad_ImpAmelia_Pct>=20) |> pull(iCode)
+
+#vemos cuales hemos eliminado: 
+eliminados_ImpAmelia <- disponibilidad_ImpAmelia |> filter(disponibilidad_ImpAmelia_Pct<20) |> pull(iCode)
+print(paste("Indicadores eliminados_ImpAmelia por baja disponibilidad_ImpAmelia:", length(eliminados_ImpAmelia)))
+print(eliminados_ImpAmelia)
+```
+ Con el filtro de eliminar los pct<20
+ [1] "Indicadores eliminados_ImpAmelia por baja disponibilidad_ImpAmelia incluyendo el año 2020 : 10"
+ [1] "IAMB0004" "IECO0012" "IECO0013" "ISOC0004" "IAMB0005" "IAMB0003" "IAMB0002"
+ [8] "IAMB0006" "IAMB0007" "IAMB0001"
+ 
+  [1] "Indicadores eliminados_ImpAmelia por baja disponibilidad_ImpAmelia excluyendo el año 2020 : 9. salvo a IAMB0002"
+ [1] "IAMB0004" "IAMB0005" "IAMB0003" "IECO0012" "IECO0013" "ISOC0004" "IAMB0006"
+[8] "IAMB0007" "IAMB0001"
+
+Con el filtro de eliminar los pct<10: 
+"Indicadores eliminados_ImpAmelia por baja disponibilidad_ImpAmelia incluyendo el año 2020: 6"
+[1] "IAMB0004" "IAMB0005" "IAMB0003" "IECO0012" "IECO0013" "ISOC0004"
+
+"Indicadores eliminados_ImpAmelia por baja disponibilidad_ImpAmelia excluyendo el año 2020:
+
+#Eliminamos indicadores con baja disponibilidad
+```{r eliminar_indicadores}
+# Indicadores a eliminar (baja disponibilidad excluyendo 2020)
+indicadores_eliminar <- c("IAMB0004", "IAMB0005", "IAMB0003", "IECO0012", 
+                          "IECO0013", "ISOC0004")
+
+# Filtramos iData eliminando esos indicadores
+iData_clean <- iData_ImpAmelia %>%
+  select(-any_of(indicadores_eliminar))
+
+# Verificación
+print(paste("Indicadores restantes:", ncol(iData_clean) - 2)) # -2 por uCode y Time
+```
+
+#Consturimos iMeta
+```{r construir_iMeta}
+df <- indicators_ImpAmelia_meta_final %>%
+  select(-any_of("dimension_id")) %>%
+  left_join(
+    df_indicadoresImpAmelia_completo_final %>%
+      select(indicator_id, dimension_id) %>%
+      distinct(),
+    by = "indicator_id"
+  )
+
+# --- NIVEL 1: INDICADORES ---
+iMeta_L1 <- df %>%
+  select(
+    iCode     = indicator_id,
+    iName     = indicator_original_name,
+    Parent    = dimension_id,
+    Direction = indicator_direction,
+    Weight    = indicator_weight
+  ) %>%
+  distinct(iCode, .keep_all = TRUE) %>%
+  # Filtramos los eliminados por baja disponibilidad
+  filter(!iCode %in% indicadores_eliminar) %>%
+  mutate(
+    Direction = ifelse(Direction == "+", 1, -1),
+    Level = 1,
+    Type  = "Indicator"
+  )
+
+# --- NIVEL 2: DIMENSIONES ---
+iMeta_L2 <- iMeta_L1 %>%
+  select(iCode = Parent) %>%
+  distinct() %>%
+  mutate(
+    iName     = paste("Dimensión:", iCode),
+    Level     = 2,
+    Parent    = "TotalIndex",
+    Direction = 1,
+    Weight    = 1,
+    Type      = "Aggregate"
+  )
+
+# --- NIVEL 3: ÍNDICE FINAL ---
+iMeta_L3 <- data.frame(
+  iCode     = "TotalIndex",
+  iName     = "Índice Sintético Regional",
+  Level     = 3,
+  Parent    = NA,
+  Direction = 1,
+  Weight    = 1,
+  Type      = "Aggregate"
+)
+
+# --- UNIÓN FINAL ---
+iMeta <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
+
+glimpse(iMeta)
+```
+
+#creamos el purse
+```{r crear_purse}
+purse <- new_coin(
+  iData    = iData_clean,
+  iMeta    = iMeta,
+  split_to = "all",
+  quietly  = TRUE
+)
+
+purse
+```
+
+```{r imputar_purse}
+# Imputamos por la mediana antes de normalizar
+purse <- Impute(
+  purse,
+  dset   = "Raw",
+  f_i    = "i_median"
+)
+```
+
+#tratamos para suavizar valores extremos
+```{r}
+purse<- Treat(
+  purse,
+  dset = "Imputed",
+  f_t = "winsorise",
+  f_t_para = list(winmax = 5), # Winmax suele estar entre 3 y 5
+  disable = FALSE
+)
+```
+
+#normalizamos
+```{r normalizar_purse}
+purse <- Normalise(
+  purse,
+  dset         = "Treated",
+  normalise_by = "all",
+  f_n          = "n_minmax",
+  f_n_para     = list(l_u = c(1, 100))
+)
+```
+
+```{r correlaciones_purse}
+coin_2022 <- purse$coin[[which(purse$Time == 2022)]]
+
+plot_corr(
+  coin_2022,
+  dset     = "Normalised",
+  grouplev = 3, #ojo, sale diferente cn 2 que con 3, mirar bien que significa
+  flagging = TRUE,
+  cortype  = "pearson"
+)
+```
+
+```{r pca_purse}
+# Extraemos todos los años del purse en un solo df normalizado
+df_norm <- get_dset(coin_2022, dset = "Normalised") %>%
+  filter(uCode != "ESP")
+
+# Preparamos para PCA: solo columnas numéricas de indicadores
+df_pca <- df_norm %>%
+  select(-uCode) %>%
+  select(where(is.numeric))
+
+pca_result <- prcomp(df_pca, center = TRUE, scale. = TRUE)
+
+summary(pca_result)
+
+biplot(pca_result, scale = 0, cex = 0.7,
+       main = "PCA — Indicadores de Turismo Sostenible (2022)")
+```
+
+```{r pca_varianza_plot}
+varianza_explicada <- summary(pca_result)$importance[2, ]
+
+tibble(
+  PC  = factor(paste0("PC", seq_along(varianza_explicada)),
+               levels = paste0("PC", seq_along(varianza_explicada))),
+  Var = varianza_explicada * 100
+) %>%
+  slice_head(n = 10) %>%
+  ggplot(aes(x = PC, y = Var)) +
+  geom_col(fill = "#4C72B0") +
+  geom_line(aes(group = 1), color = "red", linewidth = 0.8) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Scree plot — Varianza explicada por componente",
+       x = "Componente principal", y = "Varianza explicada (%)") +
+  theme_minimal()
+```
+
+```{r clustering_indicadores}
+# Transponemos: ahora las filas son indicadores y las columnas son observaciones
+df_pca_t <- t(df_pca)
+
+dist_matrix_ind   <- dist(df_pca_t, method = "euclidean")
+hclust_ind <- hclust(dist_matrix_ind, method = "ward.D2")
+
+plot(hclust_ind,
+     main = "Dendrograma — Clustering de Indicadores (Ward D2)",
+     xlab = "Indicador", ylab = "Distancia",
+     cex  = 0.7)
+
+k_ind <- 4
+rect.hclust(hclust_ind, k = k_ind, border = "red")
+```
+
+```{r clustering_indicadores_grupos}
+clusters_ind <- cutree(hclust_ind, k = k_ind)
+
+df_clusters_ind <- tibble(
+  iCode   = names(clusters_ind),
+  Cluster = factor(clusters_ind)
+)
+
+print(df_clusters_ind %>% arrange(Cluster), n=100)
+```
+
+#ponderacion por PCA
+```{r reducir_indicadores_eco}
+library(caret)
+
+# Extraemos indicadores de ECO con todos los años apilados
+df_norm_todos <- get_dset(purse, dset = "Normalised") %>%
+  filter(uCode != "ESP") %>%
+  select(-uCode, -Time) %>%
+  select(where(is.numeric)) %>%
+  mutate(across(everything(), ~ ifelse(is.na(.x), mean(.x, na.rm = TRUE), .x)))
+
+df_eco <- df_norm_todos %>%
+  select(any_of(iMeta %>% filter(Parent == "ECO") %>% pull(iCode)))
+
+# Matriz de correlaciones
+cor_eco <- cor(df_eco, use = "pairwise.complete.obs")
+
+print(paste("Pares con correlación > 0.95:", sum(abs(cor_eco[upper.tri(cor_eco)]) > 0.95)))
+
+# Detectamos y eliminamos redundantes
+redundantes_eco <- findCorrelation(cor_eco, cutoff = 0.9, names = TRUE)
+print(paste("Indicadores redundantes en ECO (cutoff 0.9):", length(redundantes_eco)))
+print(redundantes_eco)
+
+df_eco_reducido <- df_eco %>% select(-any_of(redundantes_eco))
+indicadores_eco_finales <- names(df_eco_reducido)
+print(paste("Indicadores ECO tras limpieza:", length(indicadores_eco_finales)))
+print(indicadores_eco_finales)
+```
+
+#pca que me da mismo peso para todos los indicadores individuales por dimensión. 
+```{r pesos_pca_nivel1}
+dimensiones <- iMeta %>%
+  filter(Level == 1) %>%
+  pull(Parent) %>%
+  unique()
+
+pesos_pca_L1 <- map_df(dimensiones, function(dim) {
+  
+  inds_dim <- iMeta %>%
+    filter(Level == 1, Parent == dim) %>%
+    pull(iCode)
+  
+  df_dim <- df_norm_todos %>%
+    select(any_of(inds_dim)) %>%
+    # Para ECO usamos solo los no redundantes
+    { if (dim == "ECO") select(., any_of(indicadores_eco_finales)) else . } %>%
+    select(where(~ var(.x, na.rm = TRUE) > 1e-10))
+  
+  if (ncol(df_dim) < 2) return(NULL)
+  
+  pca_dim     <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  var_exp     <- pca_dim$sdev^2 / sum(pca_dim$sdev^2)
+  loadings_sq <- pca_dim$rotation^2
+  pesos       <- as.vector(loadings_sq %*% var_exp)
+  pesos_norm  <- pesos / sum(pesos)
+  
+  tibble(
+    iCode      = colnames(df_dim),
+    Parent     = dim,
+    Weight_PCA = round(pesos_norm, 4)
+  )
+})
+
+print(pesos_pca_L1 %>% arrange(Parent, desc(Weight_PCA)), n = 60)
+```
+#pca que me da distintos pesos para indicadores individuales
+```{r pesos_pca_nivel1}
+dimensiones <- iMeta %>%
+  filter(Level == 1) %>%
+  pull(Parent) %>%
+  unique()
+
+pesos_pca_L1 <- map_df(dimensiones, function(dim) {
+  
+  inds_dim <- iMeta %>%
+    filter(Level == 1, Parent == dim) %>%
+    pull(iCode)
+  
+  df_dim <- df_norm_todos %>%
+    select(any_of(inds_dim)) %>%
+    { if (dim == "ECO") select(., any_of(indicadores_eco_finales)) else . } %>%
+    select(where(~ var(.x, na.rm = TRUE) > 1e-10))
+  
+  if (ncol(df_dim) < 2) return(NULL)
+  
+  pca_dim <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  
+  # Usamos solo PC1: los loadings absolutos del primer componente
+  loadings_pc1 <- abs(pca_dim$rotation[, 1])
+  pesos_norm   <- loadings_pc1 / sum(loadings_pc1)
+  
+  # Diagnóstico: varianza explicada por PC1
+  var_pc1 <- pca_dim$sdev[1]^2 / sum(pca_dim$sdev^2)
+  message("Dimensión ", dim, " — Varianza explicada PC1: ", round(var_pc1 * 100, 1), "%")
+  
+  tibble(
+    iCode      = colnames(df_dim),
+    Parent     = dim,
+    Weight_PCA = round(pesos_norm, 4)
+  )
+})
+
+print(pesos_pca_L1 %>% arrange(Parent, desc(Weight_PCA)), n = 60)
+```
+
+```{r pesos_pca_nivel2}
+# Score de cada dimensión = media ponderada de sus indicadores con pesos PCA L1
+df_scores_dim <- map_df(dimensiones, function(dim) {
+  
+  inds_dim <- pesos_pca_L1 %>%
+    filter(Parent == dim) %>%
+    pull(iCode)
+  
+  pesos_dim <- pesos_pca_L1 %>%
+    filter(Parent == dim) %>%
+    pull(Weight_PCA)
+  
+  df_dim <- df_norm_todos %>%
+    select(any_of(inds_dim))
+  
+  score <- as.vector(as.matrix(df_dim) %*% pesos_dim)
+  
+  tibble(dimension = dim, score = score, obs = seq_len(nrow(df_dim)))
+}) %>%
+  pivot_wider(names_from = dimension, values_from = score, id_cols = obs) %>%
+  select(-obs)
+
+# PCA sobre los scores de las 3 dimensiones — solo PC1
+pca_L2 <- prcomp(df_scores_dim, center = TRUE, scale. = TRUE)
+
+var_pc1_L2 <- pca_L2$sdev[1]^2 / sum(pca_L2$sdev^2)
+message("Varianza explicada PC1 nivel dimensiones: ", round(var_pc1_L2 * 100, 1), "%")
+
+loadings_L2   <- abs(pca_L2$rotation[, 1])
+pesos_L2_norm <- loadings_L2 / sum(loadings_L2)
+
+df_pesos_L2 <- tibble(
+  iCode      = dimensiones,
+  Weight_PCA = round(pesos_L2_norm, 4)
+)
+
+print(df_pesos_L2)
+```
+
+```{r actualizar_imeta_pesos_pca}
+# Actualizamos iMeta con los pesos PCA de nivel 1
+# Para nivel 2 usamos peso igual (1/3) entre dimensiones
+iMeta_PCA <- iMeta %>%
+  left_join(
+    pesos_pca_L1 %>% select(iCode, Weight_PCA),
+    by = "iCode"
+  ) %>%
+  mutate(
+    Weight = case_when(
+      Level == 1 & !is.na(Weight_PCA) ~ Weight_PCA,  # pesos PCA para indicadores
+      Level == 2 ~ 1/3,                               # peso igual para dimensiones
+      TRUE ~ Weight
+    )
+  ) %>%
+  select(-Weight_PCA)
+
+# Reconstruimos el purse con los nuevos pesos
+purse_PCA <- new_coin(
+  iData    = iData_clean,
+  iMeta    = iMeta_PCA,
+  split_to = "all",
+  quietly  = TRUE
+)
+
+purse_PCA <- Impute(purse_PCA,    dset = "Raw",       f_i  = "i_median")
+purse_PCA <- Treat(purse_PCA,
+  dset = "Imputed",
+  f_t = "winsorise",
+  f_t_para = list(winmax = 5), # Winmax suele estar entre 3 y 5
+  disable = FALSE)
+purse_PCA <- Normalise(purse_PCA, dset = "Imputed",   normalise_by = "all",
+                       f_n = "n_minmax", f_n_para = list(l_u = c(1, 100)))
+
+
+# ============================================================
+# 2. BLOQUE DE LIMPIEZA MANUAL (PÉGALO AQUÍ)
+# ============================================================
+# Extraemos los datos para limpiar los ceros que se resisten
+dset_norm_clean <- get_dset(purse_PCA, dset = "Normalised")
+
+dset_norm_clean <- dset_norm_clean %>%
+  mutate(across(where(is.numeric), ~ case_when(
+    is.na(.x) ~ 1,      # Cambia NAs por 1
+    .x <= 0   ~ 1,      # Cambia 0 o negativos por 1
+    TRUE      ~ .x      # Deja igual lo que sea > 0
+  )))
+
+# Sobreescribimos la tabla "Normalised" dentro del objeto purse_PCA
+purse_PCA$Data$Normalised <- dset_norm_clean
+
+# Verificación en consola (Debe decir "Mínimo: 1")
+message("Mínimo tras limpieza: ", min(dset_norm_clean[,-c(1,2)], na.rm=T))
+```
+
+#agregación media aritmética
+```{r agregacion_media_aritmetica}
+# Agregación con media aritmética
+purse_PCA_amean <- Aggregate(
+  purse_PCA,
+  dset = "Normalised",
+  f_ag = "a_amean"
+)
+
+df_scores_amean <- get_dset(purse_PCA_amean, dset = "Aggregated") %>%
+  select(uCode, Time, TotalIndex) %>%
+  filter(uCode != "ESP") %>%
+  arrange(Time, desc(TotalIndex)) %>%
+  rename(Score_Amean = TotalIndex)
+
+print(df_scores_amean)
+```
+
+#ranking usando media aritmetica: 
+```{r}
+library(dplyr)
+
+# 1. Extraemos y calculamos los rankings
+df_rankings <- get_dset(purse_PCA_amean, dset = "Aggregated") %>%
+  # Seleccionamos columnas clave (uCode suele ser el geo_id de la CCAA)
+  select(uCode, Time, TotalIndex) %>%
+  # Quitamos el total nacional para que no altere el ranking
+  filter(uCode != "ESP") %>%
+  # Agrupamos por año para que el ranking se reinicie cada vez
+  group_by(Time) %>%
+  # Ordenamos por puntuación descendente
+  arrange(Time, desc(TotalIndex)) %>%
+  # Creamos la columna de posición (1, 2, 3...)
+  mutate(Rank = row_number()) %>%
+  # Renombramos para que quede profesional
+  rename(CCAA = uCode, Year = Time, Score = TotalIndex) %>%
+  ungroup()
+
+# 2. Ver el resultado (puedes filtrar por un año específico para chequear)
+print(df_rankings)
+
+# Opcional: Ver solo el Top 3 de cada año
+df_rankings %>% filter(Rank <= 3)
+```
+
+
+
+```{r diagnostico_valores_negativos}
+
+# 1. Extraemos el dataset normalizado
+df_norm <- get_dset(purse_PCA, dset = "Normalised")
+
+# 2. Buscamos qué filas tienen algún valor cero o negativo
+# Usamos pivot_longer para que sea fácil de leer en consola
+culpables <- df_norm %>%
+  pivot_longer(
+    cols = -c(uCode, Time), 
+    names_to = "Indicador", 
+    values_to = "Valor"
+  ) %>%
+  filter(Valor <= 0) %>%
+  arrange(Valor)
+
+# 3. Mostramos los resultados
+print(culpables, n=50)
+```
+
+#intento arreglar media geometrica: 
+```{r agregacion_media_geometrica_MANUAL}
+# ============================================================
+# MEDIA GEOMÉTRICA CALCULADA MANUALMENTE (Lo más seguro)
+# ============================================================
+
+# Paso 1: Obtener datos normalizados
+df_norm <- get_dset(purse_PCA, dset = "Normalised") %>%
+  filter(uCode != "ESP")
+
+# Paso 2: Identificar columnas de indicadores
+cols_indicadores <- setdiff(
+  names(df_norm),
+  c("uCode", "Time")
+)
+
+# Paso 3: Función para media geométrica robusta
+media_geometrica_robusta <- function(row) {
+  # Filtrar: solo valores > 0 y no-NA
+  valores_validos <- row[row > 0 & !is.na(row)]
+  
+  # Si no hay valores válidos, devolver NA
+  if (length(valores_validos) == 0) return(NA_real_)
+  
+  # Media geométrica = exp(mean(log(valores)))
+  exp(mean(log(valores_validos)))
+}
+
+# Paso 4: Calcular MG por cada fila (usando apply para mayor control)
+# Convertir a matriz solo los indicadores
+matriz_indicadores <- df_norm %>%
+  select(all_of(cols_indicadores)) %>%
+  as.matrix()
+
+# Aplicar MG por fila (MARGIN=1)
+scores_mg <- apply(
+  matriz_indicadores,
+  MARGIN = 1,
+  FUN = media_geometrica_robusta
+)
+
+# Incorporar al dataframe de resultados
+df_resultados <- df_norm %>%
+  select(uCode, Time) %>%
+  mutate(ScoreGeometrico = scores_mg)
+
+# Paso 5: Crear ranking por año
+df_ranking_manual <- df_resultados %>%
+  group_by(Time) %>%
+  arrange(Time, desc(ScoreGeometrico)) %>%
+  mutate(
+    Posicion = row_number(),
+    Pct_Inferior = round(Posicion / n() * 100, 1)
+  ) %>%
+  rename(CCAA = uCode, Año = Time, Score = ScoreGeometrico) %>%
+  select(CCAA, Año, Score, Posicion, Pct_Inferior) %>%
+  ungroup()
+
+# Mostrar resultado
+print(df_ranking_manual)
+
+# Ranking 2022
+print("=== TOP 10 AÑO 2022 ===")
+df_ranking_manual %>% 
+  filter(Año == 2022, Posicion <= 10) %>%
+  print()
+```
+
+
+

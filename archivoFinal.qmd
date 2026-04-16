@@ -1,0 +1,121 @@
+---
+title: "indicadores_calculados_final2016_2024"
+format: html
+---
+
+```{r librerias, message=FALSE, warning=FALSE}
+library(COINr)
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(stringr)
+library(Benchmarking)
+```
+
+```{r retocamos nuestro df para cumplir los requerimientos de COINr}
+# 1. Cargo datos
+indicadores_calculados_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/cindicators.rds")
+indicators_meta_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/indicators.rds")
+df_indicadores_completo_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/df_indicadores_completo.rds")
+
+# 2. Renombro la columna valor y elimino source_id
+indicadores_calculados_final <- indicadores_calculados_final |> 
+  rename(value = indicator_value) |> 
+  select(-source_id)
+
+# 3. Verificación rápida
+indicadores_activos <- indicadores_calculados_final %>%
+  mutate(Year = year(as.Date(date))) %>% 
+  pull(indicator_id) %>% 
+  unique() 
+
+print(paste("Indicadores detectados con datos:", length(indicadores_activos)))
+```
+
+
+# Con todos los años
+```{r nuestro iData}
+# Transformamos a formato ancho (iData)
+iData_final <- indicadores_calculados_final %>%
+  mutate(Time = year(as.Date(date))) %>%
+  select(uCode = geo_id, Time, indicator_id, value) |> 
+  pivot_wider(names_from = indicator_id, values_from = value)
+
+# Paso los NaN a NA para tenerlo todo igual
+iData_final[do.call(cbind, lapply(iData_final, is.nan))] <- NA
+
+head(iData_final)
+```
+
+
+#pruebas
+```{r}
+# 2. Calculamos Min y Max por cada indicador y cada año
+# Quitamos uCode porque es texto y daría error
+stats <- iData_final %>%
+  select(-uCode) %>% 
+  group_by(Time) %>%
+  summarise(across(where(is.numeric), list(
+    min = ~min(.x, na.rm = TRUE),
+    max = ~max(.x, na.rm = TRUE)
+  ), .names = "{.col}_{.fn}")) %>%
+  pivot_longer(
+    cols = -Time,
+    names_to = c("iCode", ".value"),
+    names_pattern = "(.*)_(.*)"
+  )
+
+# 3. FILTRAR INDICADORES CONSTANTES
+# Los que tienen Min == Max son los que darán NaN al normalizar
+indicadores_con_problemas <- stats %>%
+  filter(min == max) %>%
+  select(Time, iCode, min, max)
+
+# Ver el resultado
+print(indicadores_con_problemas, n=100)
+
+# 4. LISTA ÚNICA DE NOMBRES (sin duplicados)
+nombres_problematicos <- indicadores_con_problemas %>%
+  pull(iCode) %>%
+  unique()
+
+# Imprimir la lista limpia
+print("Indicadores a revisar:")
+print(nombres_problematicos)
+```
+
+
+[1] "Indicadores a revisar:"
+ [1] "IAMB0003" "IAMB0005" "IECO0012" "IECO0013" "ISOC0004" "IAMB0002" "IAMB0006"
+ [8] "IAMB0007" "IECO0001" "IECO0002" "IECO0005"
+ 
+
+```{r disponibilidad de datos por indicador}
+# Calculamos la disponibilidad
+disponibilidad <- iData_final %>%
+  filter(uCode != "ESP") %>%
+  # Calculamos el % de datos no NA para cada columna (excepto uCode y Time)
+  summarise(across(-c(uCode, Time), ~ sum(!is.na(.x)) / n())) %>%
+  # Pasamos a formato largo para que sea una lista
+  pivot_longer(everything(), names_to = "iCode", values_to = "Disponibilidad") %>%
+  # Lo multiplicamos por 100 para que sea porcentaje y redondeamos
+  mutate(Disponibilidad_Pct = round(Disponibilidad * 100, 2)) %>%
+  # Ordenamos para ver primero los que tienen menos datos
+  arrange(Disponibilidad_Pct)
+
+# Imprimimos la tabla completa
+df_disponibilidad_datos <- as.data.frame(disponibilidad)
+View(df_disponibilidad_datos)
+
+indicadores_a_mantener <- disponibilidad |> filter(Disponibilidad_Pct>=20) |> pull(iCode)
+
+#vemos cuales hemos eliminado: 
+eliminados <- disponibilidad |> filter(Disponibilidad_Pct<20) |> pull(iCode)
+print(paste("Indicadores eliminados por baja disponibilidad:", length(eliminados)))
+print(eliminados)
+```
+ [1] "Indicadores eliminados por baja disponibilidad: 10"
+ [1] "IAMB0004" "IECO0012" "IECO0013" "ISOC0004" "IAMB0005" "IAMB0003" "IAMB0002"
+ [8] "IAMB0006" "IAMB0007" "IAMB0001"
+ 

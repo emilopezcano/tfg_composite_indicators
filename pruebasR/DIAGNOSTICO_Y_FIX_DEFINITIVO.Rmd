@@ -1,0 +1,259 @@
+---
+title: "DIAGNÓSTICO Y FIX DEFINITIVO: Media Geométrica"
+format: html
+---
+
+# 🔴 ¿POR QUÉ SIGUE DANDO ERROR CON MG?
+
+Hay 0s escondidos en tu dataset normalizado. Vamos a **verlos exactamente dónde están** antes de arreglarlo.
+
+---
+
+# BLOQUE DE DIAGNÓSTICO COMPLETO
+
+```{r diagnostico_profundo}
+# ============================================================
+# 1. EXTRAER DATOS NORMALIZADOS
+# ============================================================
+df_norm <- get_dset(purse_PCA, dset = "Normalised") %>%
+  filter(uCode != "ESP")
+
+# Obtener lista de indicadores
+cols_indicadores <- setdiff(
+  names(df_norm),
+  c("uCode", "Time")
+)
+
+# 2. BUSCAR TODOS LOS PROBLEMAS
+# ============================================================
+
+cat("\n═══════════════════════════════════════════════════════\n")
+cat("DIAGNÓSTICO DE VALORES PROBLEMÁTICOS\n")
+cat("═══════════════════════════════════════════════════════\n")
+
+# a) ¿Hay NAs?
+n_nas <- sum(if_else(is.na(df_norm %>% select(all_of(cols_indicadores))), 1, 0))
+cat("\n✓ Total de NAs:", n_nas, "\n")
+
+# b) ¿Hay ceros?
+n_ceros <- sum(if_else(
+  (df_norm %>% select(all_of(cols_indicadores))) == 0, 
+  1, 
+  0
+), na.rm=TRUE)
+cat("✓ Total de ceros (0): ", n_ceros, "\n")
+
+# c) ¿Hay negativos?
+n_negativos <- sum(if_else(
+  (df_norm %>% select(all_of(cols_indicadores))) < 0, 
+  1, 
+  0
+), na.rm=TRUE)
+cat("✓ Total de negativos: ", n_negativos, "\n")
+
+# d) Rango observable
+min_obs <- min(as.matrix(df_norm %>% select(all_of(cols_indicadores))), na.rm=TRUE)
+max_obs <- max(as.matrix(df_norm %>% select(all_of(cols_indicadores))), na.rm=TRUE)
+cat("✓ Mínimo observado:", min_obs, "\n")
+cat("✓ Máximo observado:", max_obs, "\n")
+
+# e) ¿Dónde están los ceros usando pivot_longer?
+if (n_ceros > 0) {
+  cat("\n⚠️  UBICACIÓN DE CEROS:\n")
+  df_ceros <- df_norm %>%
+    pivot_longer(
+      cols = all_of(cols_indicadores),
+      names_to = "Indicador",
+      values_to = "Valor"
+    ) %>%
+    filter(Valor == 0) %>%
+    arrange(Time, Indicador, uCode)
+  
+  print(head(df_ceros, 20))
+  cat("\n... (mostrando primeras 20 filas de", nrow(df_ceros), "totales)\n")
+}
+
+# f) Varianza de cada indicador
+cat("\n✓ VARIANZA POR INDICADOR:\n")
+varianzas <- df_norm %>%
+  select(all_of(cols_indicadores)) %>%
+  sapply(var, na.rm=TRUE) %>%
+  sort()
+print(varianzas)
+
+# 3. MATRIZ INDICADORES: Verificar estructura
+# ============================================================
+matriz_ind <- df_norm %>%
+  select(all_of(cols_indicadores)) %>%
+  as.matrix()
+
+cat("\n✓ Dimensiones matriz:", nrow(matriz_ind), "filas ×", ncol(matriz_ind), "columnas\n")
+cat("✓ Clase:", class(matriz_ind), "\n")
+cat("✓ ¿Hay NAs en matriz?:", any(is.na(matriz_ind)), "\n")
+cat("✓ ¿Hay ceros en matriz?:", any(matriz_ind == 0, na.rm=TRUE), "\n")
+```
+
+---
+
+# BLOQUE FIX DEFINITIVO: Limpieza BRUTAL de ceros
+
+```{r fix_ceros_brutal}
+# ============================================================
+# PASO 1: LIMPIEZA BRUTAL DE CEROS Y NAS
+# ============================================================
+
+df_norm_limpio <- df_norm %>%
+  select(uCode, Time) %>%
+  bind_cols(
+    df_norm %>%
+      select(all_of(cols_indicadores)) %>%
+      mutate(across(
+        everything(),
+        ~ case_when(
+          is.na(.x) ~ 1,           # NAs → 1
+          .x <= 0 ~ 1,             # Ceros/negativos → 1
+          .x > 100 ~ 100,          # Excesos → 100
+          TRUE ~ .x                # El resto igual
+        )
+      ))
+  )
+
+# Verificación post-limpieza
+min_limpio <- min(
+  as.matrix(df_norm_limpio %>% select(all_of(cols_indicadores))), 
+  na.rm=TRUE
+)
+max_limpio <- max(
+  as.matrix(df_norm_limpio %>% select(all_of(cols_indicadores))), 
+  na.rm=TRUE
+)
+
+cat("\n═══════════════════════════════════════════════════════\n")
+cat("VERIFICACIÓN POST-LIMPIEZA\n")
+cat("═══════════════════════════════════════════════════════\n")
+cat("✓ Mínimo post-limpieza:", min_limpio, "\n")
+cat("✓ Máximo post-limpieza:", max_limpio, "\n")
+cat("✓ ¿Hay ceros?:", any(
+  as.matrix(df_norm_limpio %>% select(all_of(cols_indicadores))) == 0,
+  na.rm=TRUE
+), "\n")
+cat("✓ ¿Hay NAs?:", any(is.na(
+  as.matrix(df_norm_limpio %>% select(all_of(cols_indicadores)))
+)), "\n")
+
+# SOBRESCRIBER en purse_PCA
+purse_PCA$Data$Normalised <- df_norm_limpio
+
+# ============================================================
+# PASO 2: MEDIA GEOMÉTRICA (AHORA FUNCIONARÁ)
+# ============================================================
+
+# Función MG simple
+mg_simple <- function(x) {
+  # Remover NAs y valores <= 0
+  x_valido <- x[!is.na(x) & x > 0]
+  
+  if (length(x_valido) == 0) {
+    return(NA_real_)
+  }
+  
+  exp(mean(log(x_valido)))
+}
+
+# Aplicar por filas
+matriz_indicadores_limpia <- df_norm_limpio %>%
+  select(all_of(cols_indicadores)) %>%
+  as.matrix()
+
+scores_mg <- apply(matriz_indicadores_limpia, MARGIN=1, FUN=mg_simple)
+
+# ============================================================
+# PASO 3: CREAR DATAFRAME FINAL CON RANKING
+# ============================================================
+
+df_ranking_final <- df_norm_limpio %>%
+  select(uCode, Time) %>%
+  mutate(Score_MG = scores_mg) %>%
+  group_by(Time) %>%
+  arrange(Time, desc(Score_MG)) %>%
+  mutate(Rank = row_number()) %>%
+  rename(CCAA = uCode, Año = Time) %>%
+  select(CCAA, Año, Score_MG, Rank) %>%
+  ungroup()
+
+cat("\n═══════════════════════════════════════════════════════\n")
+cat("RANKING FINAL (TODOS LOS AÑOS)\n")
+cat("═══════════════════════════════════════════════════════\n")
+print(df_ranking_final)
+
+cat("\n═══════════════════════════════════════════════════════\n")
+cat("TOP 5 POR AÑO\n")
+cat("═══════════════════════════════════════════════════════\n")
+print(df_ranking_final %>% filter(Rank <= 5))
+```
+
+---
+
+# Si AÚN tienes problemas, usa esto (Ultra-defensiva)
+
+```{r opcion_ultradefensiva}
+# ÚLTIMA OPCIÓN: Sin COINr, sin purse_PCA, cálculo manual directo
+
+# 1. Cargar datos brutos y normalizarlos tú mismo
+df_imputed <- get_dset(purse_PCA, dset = "Imputed") %>%
+  filter(uCode != "ESP")
+
+cols_num <- setdiff(names(df_imputed), c("uCode", "Time"))
+
+# Normalizador global
+normalizar_global <- function(x) {
+  x_min <- min(x, na.rm=TRUE)
+  x_max <- max(x, na.rm=TRUE)
+  
+  if (is.na(x_min) || is.na(x_max) || x_min == x_max) {
+    return(rep(50, length(x)))
+  }
+  
+  norm <- (x - x_min) / (x_max - x_min) * 99 + 1
+  
+  pmax(1, pmin(100, norm, na.rm=TRUE))
+}
+
+# 2. Aplicar normalización global
+df_norm_manual <- df_imputed %>%
+  mutate(across(all_of(cols_num), normalizar_global))
+
+# 3. Media geométrica manual
+df_scores <- df_imputed %>%
+  select(uCode, Time) %>%
+  mutate(
+    Score_MG = apply(
+      df_norm_manual %>% select(all_of(cols_num)) %>% as.matrix(),
+      1,
+      function(row) {
+        row_valido <- row[row > 0 & !is.na(row)]
+        if (length(row_valido) == 0) return(50)
+        exp(mean(log(row_valido)))
+      }
+    )
+  )
+
+# 4. Ranking
+df_ranking_manual_final <- df_scores %>%
+  group_by(Time) %>%
+  arrange(Time, desc(Score_MG)) %>%
+  mutate(Posicion = row_number()) %>%
+  rename(CCAA = uCode, Año = Time) %>%
+  select(CCAA, Año, Score_MG, Posicion) %>%
+  ungroup()
+
+print("=== RANKING FINAL (COMPLETAMENTE MANUAL) ===")
+print(df_ranking_manual_final)
+```
+
+---
+
+# 📊 COMPARACIÓN: Opción 1 vs Opción 2
+
+Ejecuta AMBOS bloques y compara los resultados para ver cuál te da lo que esperas.
+

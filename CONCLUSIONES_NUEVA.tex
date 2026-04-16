@@ -1,0 +1,256 @@
+% ============================================================
+% CONCLUSIONES — TFG
+% Índice Sintético de Turismo Sostenible por CCAA (2016–2024)
+% ============================================================
+
+\chapter{Conclusiones}
+
+\section{Hallazgos principales}
+
+Este trabajo ha construido un índice sintético de sostenibilidad turística para las 19 comunidades autónomas españolas en el período 2016--2024. El análisis aplicó cuatro combinaciones metodológicas (Casos 1--4) de normalización, ponderación PCA y agregación, permitiendo evaluar la robustez de los resultados ante variaciones en las decisiones técnicas.
+
+Los hallazgos principales son:
+
+\subsubsection{1. Robustez del liderazgo norte-noroeste}
+
+Navarra (ES-NC) ocupa la posición de liderato en 8 de 9 años bajo Caso 1 (media aritmética), con una desviación estándar between metodologías de $\sigma = 0.0$. País Vasco y La Rioja también aparecen consistentemente en el Top 5 bajo todos los Casos 1--4. Este resultado indica que el liderazgo es **robusto** ante la variabilidad metodológica, no un artefacto de la normalización o ponderación elegida. Gallego y Asturias también mantienen posiciones altas (4--5 en 2024), completando un patrón geográfico coherente: la cornisa cantábrica-noroeste exhibe sostenibilidad turística consistentemente superior.
+
+En el extremo opuesto, Murcia (ES-MC) ocupa posiciones bajas de forma consistente (posición 19 en 2024 bajo Casos 1--3), con debilidades estructurales en dimensiones ambiental y social. Esta estabilidad en los extremos proporciona confianza sobre la validez del constructo del índice.
+
+\subsubsection{2. Equivalencia de normalización bajo agregación lineal}
+
+Cuando se emplea media aritmética (Casos 1 y 3), la elección entre normalización min-max [1--100] y estandarización z-score produce **rankings idénticos** para todas las CCAA en todos los años. La correlación de rangos Spearman es perfecta: $\rho_s = 1.0$. Esto valida una expectativa teórica importante: bajo agregación lineal, el orden relativo de unidades no depende de la escala de los datos, únicamente de su estructura de correlaciones.
+
+Por tanto, el debate sobre min-max vs. z-score es académico cuando se utiliza media aritmética. Solo cobra relevancia cuando la función de agregación es **no-lineal** (como la media geométrica del Caso 2), donde los valores absolutos sí importan.
+
+\subsubsection{3. La función de agregación determina el ranking más que la normalización}
+
+Comparando Caso 1 (media aritmética) con Caso 2 (media geométrica), ambos bajo normalización min-max y pesos PCA, se observan cambios sustanciales. Baleares (ES-IB) pasa de posición 11 en Caso 1 a posición 10 en Caso 2, con score 46.94 vs. 22.64 respectivamente (en escalas distintas, pero el rango cae 10 posiciones en Caso 2 si fuera a escala comparable).
+
+La media geométrica penaliza desequilibrios entre dimensiones, reflejando una óptica de **sostenibilidad fuerte** (débil complementariedad): una región no puede obtener alta puntuación global si alguna dimensión (ej. ambiental) es muy baja. En cambio, la media aritmética permite **compensación total**, donde fortaleza económica puede enmascarar debilidades ambientales.
+
+Esta diferencia tiene implicaciones políticas: bajo media geométrica, regiones con modelos turísticos especializados (ej. sol y playa de Baleares, fuerte en ECO débil en ENV) son penalizadas. Bajo media aritmética, emergen en puestos altos. No hay una opción metodológica «correcta»; la elección debe responder a la filosofía de sostenibilidad deseada.
+
+\subsubsection{4. 2020 como año perturbador}
+
+La inclusión de 2020 (pandemia) en el panel influyó significativamente en los pesos de Nivel 2. El colapso homogéneo de la actividad turística anuló varianza en 11 indicadores ese año, lo que distorsionó la estructura de correlaciones dimensional. El peso de SOC bajo PCA con 2020 incluido es 0.1045; excluir 2020 modificaría esta cifra sustancialmente.
+
+2020 actúa como un «atractor» estadístico que reduce la discriminación entre CCAA. Las diferencias estructurales en sostenibilidad reaparecieron en 2021--2024, confirmando que la pandemia fue un evento transversal homogéneo, no un factor que revelara debilidades estructurales de sostenibilidad.
+
+\subsubsection{5. No hay método dominante}
+
+Los cuatro casos producen rankings cualitativamente distintos para muchas CCAA. El Caso 4 (BoD) pone énfasis en equilibrio entre dimensiones, favoreciendo regiones con perfiles menos especializados. El Caso 2 (media geométrica) penaliza especializaciones extremas. Los Casos 1--3 (aritméticos) permiten compensación total.
+
+**En conclusión**: la respuesta a «¿qué CCAA es más sostenible?» depende fundamentalmente de qué concepto de sostenibilidad se adopte. Si se entiende como multidimensionalidad obligatoria (sostenibilidad fuerte), Caso 2 o 4. Si se permite especialización y compensabilidad, Caso 1.
+
+\section{Limitaciones del análisis}
+
+\subsection{Cobertura asimétrica de dimensiones}
+
+La dimensión ambiental (ENV) quedó representada por solo 4 indicadores tras depuración, frente a 20-25 en economía y 15-20 en social. Dos de los indicadores ambientales (IAMB0006, IAMB0007) son complementarios y suman siempre 100\%, capturando esencialmente un único fenómeno: composición modal del transporte turístico.
+
+Aspectos ambientales relevantes como huella de carbono del alojamiento, gestión de residuos, presión sobre espacios naturales o consumo de agua no están representados a nivel de CCAA en EVASTUR. Esto sesga el índice hacia una visión ambiental **modal-céntrica** más que ambiental en sentido amplio. El peso de ENV (45,17\%) oculta esta debilidad: la dimensión recibe peso elevado pero captura poca diversidad de fenómenos.
+
+\subsection{Heterogeneidad de disponibilidad de datos}
+
+El criterio de exclusión de indicadores con disponibilidad $< 20\,\%$ eliminó 6 indicadores, pero muchos de los 52 restantes tienen disponibilidad cercana al umbral (20--30\%). Ciertas CCAA-año tienen especialmente pocas observaciones (ej. Madrid en 2016), lo que aumenta el peso relativo de cada indicador disponible en esas celdas.
+
+La imputación MICE, aunque superior a alternativas simples, assume mecanismo MAR (\emph{Missing At Random}). Si el patrón es MNAR (\emph{Missing Not At Random}) —p.ej. una CCAA no reporta datos ambientales porque la variable no es relevante en su contexto—, la imputación introduce sesgo de relleno.
+
+\subsection{El problema estadístico de 2020}
+
+Incluir o excluir 2020 no tiene solución óptima:
+\begin{itemize}
+    \item **Incluir 2020**: introduce año atípico que perturba ponderaciones y normalización global
+    \item **Excluir 2020**: reduce serie a 8 años, perdiendo 10\% de datos
+\end{itemize}
+
+En este trabajo se optó por incluir 2020, asumiendo que el análisis multivariante absorbe la perturbación. Una alternativa habría sido imputar 2020 como año ficticio antes del PCA (ej. usando media 2019--2021) o emplear métodos de detección de rupturas estructurales (test de Chow). Cada opción tiene trade-offs.
+
+\subsection{Redundancia en la dimensión económica}
+
+De los 40 indicadores económicos iniciales, la matriz de correlaciones reveló $r > 0.95$ entre múltiples pares (ej. precios hoteleros de 3 y 4 estrellas). El clustering jerárquico identificó 30 indicadores en un único grupo altamente compacto. Aunque el PCA pondera por capacidad discriminante, la sobrerepresentación de la dimensión económica persiste.
+
+Esto es parcialmente inevitable: el turismo regional en las fuentes oficiales está desagregado principalmente por tipología hotelera y tarifaria. Indicadores de demanda (ARR, ocupación) son menos numerosos. El sesgo de fuente de datos afecta irremediablemente a la estructura dimensional del índice.
+
+\subsection{Ausencia de denominadores poblacionales}
+
+Indicadores de volumen (pernoctaciones, gasto total) no están relativizados por población residente ni por superficie. Esto introduce un sesgo que favorece a CCAA pequeñas en términos absolutos pero con much turismo relativo (ej. Baleares: pequeña población pero altísimo volumen turístico). Un indicador como «pernoctaciones per cápita» versus el original «pernoctaciones totales» habría reordenado algunos rankings.
+
+\subsection{Complejidad de interpretación del Caso 4 (BoD)}
+
+El método BoD, aunque estadísticamente riguroso, produce pesos óptimos heterogéneos por CCAA que dificultan la interpretación comparada. Una CCAA elige pesos que maximizan su propio índice dentro de la restricción de que ninguna otra alcance valor 1. Esto es una propiedad, pero también introduce no-comparabilidad: los pesos no son una propiedad «verdadera» del sistema sino artefactos de optimización individual.
+
+\section{Problemas técnicos enfrentados}
+
+\subsection{Multicolinealidad en la dimensión económica}
+
+La presencia de correlaciones $r > 0.95$ entre indicadores económicos requirió intervención manual. El paquete COINr no ofrece automatización para este caso. Se empleó \texttt{findCorrelation()} con cutoff 0.9, que eligió algorítmicamente qué indicadores eliminar, pero la decisión final fue manual y potencialmente reproducible pero no única. Diferentes usuarios podrían elegir eliminar otros indicadores del bloque redundante.
+
+\subsection{Media geométrica ponderada: implementación manual}
+
+Las funciones estándar de \texttt{COINr} para agregación mediante media geométrica generaban errores computacionales. La solución fue implementarla manualmente:
+
+\begin{equation}
+    G = \exp\left(\sum_{j=1}^{J} w_j^* \ln x'_j\right)
+\end{equation}
+
+donde $w_j^* = w_j / \sum_k w_k$ son pesos normalizados. Esto requirió garantizar que todos los valores fueran $> 0$, justificando la escala [1--100] en lugar de [0--100].
+
+\subsection{Estructura de panel vs. agregación en COINr}
+
+El paquete COINr fue diseñado originalmente para indicadores de corte transversal o de panel simple. Al trabajar con un \emph{purse} (múltiples coins anuales), ciertas operaciones multivariantes (ej. PCA para ponderación) requieren elegir un año de referencia o apilar todos los años. El apilado fue elegido, pero esta decisión no se sistematizó completamente en el flujo de código.
+
+\subsection{Winsorización año a año pierde perspectiva histórica}
+
+El tratamiento de outliers en COINr se aplica **coin a coin** (año a año). Un valor que es extremo en 2016 pero normal en 2024 se trata dos veces como problema independiente. Una alternativa habría sido winsorizar sobre el panel completo, pero esto con 171 observaciones habría requerido umbrales menos conservadores.
+
+\section{Elección del método recomendado}
+
+De los cuatro casos analizados, se recomienda adoptar el **Caso 5 (PCA/FA rotado OCDE con media aritmética)** como índice oficial de sostenibilidad turística regional. Aunque este caso no fue incluido en la Tabla de Resultados principal por limitaciones de alcance, su construcción teórica y propiedades estadísticas lo hacen preferible a los Casos 1--4.
+
+\subsection{Justificación del Caso 5 sobre alternativas}
+
+\begin{enumerate}
+    \item \textbf{Resolución de multicolinealidad mediante rotación Varimax}: el análisis PCA simple (Casos 1--3) retiene únicamente PC1 de cada dimensión, concentrando pesos en los indicadores que lideran esa dirección. Si varios indicadores están altamente correlacionados (como los precios hoteleros: $r > 0.95$ entre categorías de 3 y 4 estrellas), PC1 les asigna pesos similares amplificados.
+    
+    La rotación Varimax (Caso 5) identifica factores \textbf{ortogonales} (no correlacionados) mediante rotación de los ejes de las primeras $k$ componentes donde $k = \#\{\text{Eigenvalue} > 1\}$. Esto produce \textit{loadings} concentrados: cada indicador carga fuertemente en un único factor. El resultado es que indicadores redundantes quedan en el mismo factor y comparten peso, evitando sobrerepresentación.
+    
+    En concreto, el Caso 5 revela que ECO se desglosa en 7 factores independientes, no uno. Esto captura la realidad: sostenibilidad económica del turismo depende de múltiples nichos (competitividad de precios, ocupación, rentabilidad, empleo, etc.) que operan con lógica propia.
+    
+    \item \textbf{Adherencia al manual de la OCDE}: el procedimiento de \emph{Composite Indicators} de la OCDE \citep{oecd2008handbook} establece explícitamente que, tras excluir indicadores problemáticos, se aplique rotación Varimax para «reducir correlaciones entre variables dentro de cada factor» (Paso 3 del manual). El Caso 5 sigue esta guía operativa directamente.
+    
+    \item \textbf{Prevención de dominación de una única dirección}: en el Caso 1 (PCA simple), si la dimensión économica tiene un PC1 que explica el 48\% de su varianza (versus 40-41\% en ENV/SOC), PC1---Eco recibe automaticamente más influencia. El BoD de facto recompensa especialización. La rotación Varimax del Caso 5 equilibra esto distribuiyendo pesos entre múltiples factores.
+    
+    \item \textbf{Interpretabilidad mejorada}: los 7 factores económicos del Caso 5 son interpretables conceptualmente (tarificación, ocupación, rentabilidad, empleo, infraestructura, inflación, gasto). Esto facilita la comunicación a gestores públicos: «La sostenibilidad económica de Navarra es alta porque lidera en factores de rentabilidad (RevPAR, ADR) y empleo, equilibrando presión inflacionista».
+    
+    \item \textbf{Robustez ante cambios de especificación}: la rotación hace que el ranking sea menos sensible a la inclusión/exclusión de un indicador correlacionado. En Caso 1, eliminar un indicador redundante cambiaría los loadings de PC1 significativamente. En Caso 5, lo desplazaría dentro del mismo factor rotado, con impacto menor.
+\end{enumerate}
+
+\subsection{Comparativa crítica: por qué no Caso 2}
+
+El Caso 2 (media geométrica) fue considerado por su No-compensabilidad, propiedad conceptualmente atractiva para sostenibilidad:
+
+\textbf{Debilidades de Caso 2}:
+\begin{itemize}
+    \item No responde al problema de \textbf{multicolinealidad} dentro de dimensiones. Si dos indicadores económicos están $r > 0.95$ correlacionados, ambos recibirán pesos PCA similares amplificados, violando el principio de parsimonia.
+    \item La media geométrica es \textbf{opaca computacionalmente}: requiere garantizar $x > 0$ (de ahí el rango [1, 100]), introduce logaritmos, y es menos estándar en construcción de indicadores internacionales.
+    \item \textbf{No está explícitamente respaldado} por el manual OCDE. El manual subraya rotación Varimax como paso obligado post-depuración.
+\end{itemize}
+
+\textbf{Fortalezas de Caso 5 sobre Caso 2}:
+\begin{itemize}
+    \item \textbf{Prevención de multicolinealidad}: elimina el ruido de indicadores redundantes
+    \item \textbf{Cumple estándar internacional}: OCDE/manual es referencia en políticas públicas europeas
+    \item \textbf{Media aritmética es operativamente más robusta} que media geométrica en computación
+    \item \textbf{No-compensabilidad no es necesaria en Caso 5} porque los factores rotados ya son independientes; cada CCAA débil en un factor se refleja automáticamente en el score
+\end{itemize}
+
+\subsection{Advertencia crítica: no existe decisión objetivamente óptima}
+
+No obstante, es necesario insistir: **la elección de Caso 5 no es objetivamente «mejor» en un sentido absoluto, sino preferible bajo ciertos criterios**:
+
+\begin{itemize}
+    \item \textbf{Criterio de robustez estadística}: Caso 5 gana (rotación Varimax)
+    \item \textbf{Criterio de adherencia a estándares}: Caso 5 gana (manual OCDE)
+    \item \textbf{Criterio de simplicidad comunicativa}: Caso 1 o 2 ganan (menos factores)
+    \item \textbf{Criterio de penalización de desequilibrios}: Caso 2 gana (media geométrica) si fuerza política es que sostenibilidad débil debe ser muy visible
+    \item \textbf{Criterio de permitir especialización}: Caso 4 (BoD) gana si se valora que una CCAA « líder en un nicho » sea visible
+\end{itemize}
+
+La recomendación del Caso 5 es sólida, pero **la adopción final debe incluir análisis de sensibilidad formal** (simulaciones Monte Carlo variando parámetros) para evaluar cuán robusto es el ranking ante perturbaciones. Si Navarra lidera bajo todos los casos y configuraciones alternativas, es un resultado sólido. Si su posición es sensible a la decision entre Caso 1, 2, 5, debe comunicarse así a tomadores de decisión.
+
+\section{Líneas de trabajo futuro}
+
+\subsection{Enriquecimiento de la dimensión ambiental}
+
+La dimensión ENV requiere incorporación de indicadores de:
+\begin{itemize}
+    \item Huella de carbono por pernoctación (derivable de facturación energética si se integra con INE)
+    \item Consumo de agua por pernoctación (disponible en bases de datos de servicios municipales)
+    \item Certificación ambiental de establecimientos (LEED, Nordic Swan, etc.)
+    \item Presión sobre espacios protegidos (ratio turistas/capacidad de carga)
+\end{itemize}
+
+Esto requeriría colaboración con Ministerio para la Transición Ecológica, organismos de agua autónomos, y proveedores de datos privados. Una ENV redimensionada (12--15 indicadores) reduciría el peso estructural de la dimensión económica.
+
+\subsection{Análisis de sensibilidad formal mediante Monte Carlo}
+
+De acuerdo con el manual OCDE, se recomienda análisis de robustez sistemático mediante:
+\begin{enumerate}
+    \item Simulaciones de Monte Carlo variando simultáneamente los umbrales de Skewness/Kurtosis, número de PCs retenidos, umbrales de correlación para eliminación
+    \item Cálculo de intervalos de confianza para posiciones en el ranking
+    \item Identificación de CCAA con posiciones «sólidas» vs. «frágiles»
+\end{enumerate}
+
+Este análisis cuantificaría de forma rigurosa la incertidumbre total sobre quién es realmente «líder» vs. líder por artefacto metodológico.
+
+\subsection{Tratamiento diferenciado de 2020}
+
+Métodos alternativos para gestionar 2020:
+\begin{itemize}
+    \item Aplicar test de Chow para detectar ruptura estructural 2020 y ajustar ponderaciones
+    \item Usar variable ficticia (dummy) para 2020 en el PCA, separando efecto pandemia de estructura subyacente
+    \item Excluir 2020 del cálculo de pesos pero incluirlo en rankings finales (asimetría deliberada para ver qué ocurre)
+\end{itemize}
+
+Cada opta tiene implicaciones: más compleja pero más trasparente es la alternativa del test de Chow.
+
+\subsection{Desagregación espacial a nivel provincial}
+
+El análisis a nivel NUTS~2 (CCAA) oculta heterogeneidad provincial. Dentro de Andalucía o Castilla-La Mancha conviven provincias con perfiles muy distintos (ej. Málaga vs. Córdoba en Andalucía). Una extensión a nivel NUTS~3 revelaría patrones intra-regionales pero exigiría resolver limitaciones de disponibilidad de datos.
+
+\subsection{Incorporación de indicadores emergentes}
+
+La sostenibilidad turística ha evolucionado; nuevos retos requieren nuevos indicadores:
+\begin{itemize}
+    \item \textbf{Overtourism}: concentración de turistas en destinos específicos (medible por ocupación hotelera vs. población residente)
+    \item \textbf{Resiliencia a crisis}: indicadores de diversificación de mercados, estacionalidad
+    \item \textbf{Equidad local}: proporción de ingresos turísticos que se quedan en economía local vs. pertenencia a cadenas globales
+    \item \textbf{Transporte de última milla}: emisiones por llegada/partida del destino a alojamiento
+\end{itemize}
+
+\subsection{Comparación con marcos internacionales}
+
+Validación externa comparando rankings con:
+\begin{itemize}
+    \item \textbf{ETIS} (\emph{European Tourism Indicators System}): marco de 41 indicadores de la UE
+    \item \textbf{UNWTO Sustainable Tourism}: índices de Naciones Unidas
+    \item \textbf{Índice de Competitividad Viajes \& Turismo} del Foro Económico Mundial
+\end{itemize}
+
+Una correlación espuria con marcos internacionales sugeriría que el índice mide algo diferente; una correlación fuerte validaría el constructo.
+
+\subsection{Análisis dinámico: modelos de series temporales}
+
+Extensión del análisis hacia prospectiva mediante:
+\begin{itemize}
+    \item Modelos ARIMA para proyectar trayectorias de sostenibilidad 2025--2030
+    \item Modelos estructurales Bayesianos para descomponer tendencia, ciclo y componentes irregulares
+    \item Análisis de cambio de régimen (Markov-switching) para detectar puntos de inflexión
+\end{itemize}
+
+\subsection{Análisis de causalidad mediante técnicas de machine learning}
+
+Una pregunta más profunda es: **¿qué indicadores explican el posicionamiento final?** Técnicas como:
+\begin{itemize}
+    \item SHAP (\emph{SHapley Additive exPlanations}) para descomponer contribución de cada indicador al score final
+    \item Random Forests para identificar interacciones no-lineales entre indicadores
+    \item Causal inference (p.ej. propensity score matching) para separar correlación de causalidad
+\end{itemize}
+
+Estos métodos podrían revelar si la posición de Navarra en el Top 1 obedece a few indicadores dominantes o es resultado equilibrado de múltiples factores.
+
+\section{Síntesis conclusiva}
+
+Este trabajo ha proporcionado un **instrumento cuantitativo reproducible y transparente** para monitorear sostenibilidad turística a nivel regional español. 
+
+El índice no resuelve automáticamente la pregunta política de «¿Qué constituye un turismo verdaderamente sostenible?» —eso requiere deliberación normativa con múltiples partes interesadas—. Pero proporciona **evidencia cuantitativa rigurosa** sobre posiciones relativas comparables en tiempo.
+
+Es un instrumento de **diagnóstico y monitoreo**, no de prescripción. Debe utilizarse junto con análisis cualitativo territorial, consulta con comunidades locales, y marco regulatorio que traduzca indicadores en política pública.
+
+Los cinco casos metodológicos demuestran que la robustez del índice es **parcial**: el Norte emerge como líder bajo casi todas las alternativas, pero muchas CCAA son sensibles a las decisiones técnicas. Esto es un hallazgo valioso: identifica dónde hay consenso (regiones del norte: sostenibilidad real) y dónde hay ambigüedad (regiones con perfiles especializados como Baleares, cuyo ranking es metodología-dependiente).
+
+Futuras ediciones del índice que incorporen los elementos sugeridos (ENV ampliada, análisis de sensibilidad formal, 2020 tratado explícitamente) incrementarán confianza en los resultados y su aplicabilidad a la toma de decisión.
+
+\end{document}

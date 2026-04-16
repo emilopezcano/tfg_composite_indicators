@@ -8,8 +8,8 @@ dfvar_prov <- get_ft_data(
     pull(variable_id),
   country = "ES",
   # .source_id = "EVASTUR",
-  from_date = "2011-01-01",
-  to_date = "2025-12-31"
+  from_date = "2016-01-01",
+  to_date = "2024-12-31"
 ) |>
   mutate(variable_value_flags = as.character(variable_value_flags)) |>
   filter(stringr::str_starts(source_id, "ISTAC", negate = TRUE))

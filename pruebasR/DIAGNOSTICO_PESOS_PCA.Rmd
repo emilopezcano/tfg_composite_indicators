@@ -1,0 +1,237 @@
+---
+title: "Diagnóstico y Corrección - Pesos PCA por Dimensión"
+format: html
+---
+
+# PROBLEMA IDENTIFICADO
+
+El código `pesos_pca_nivel1` calcula correctamente el PCA pero **asigna los mismos pesos a todos los indicadores de una dimensión** porque utiliza un método que genera valores idénticos cuando:
+
+1. **Los loadings se elevan al cuadrado** → todos los valores se vuelven positivos
+2. **Se multiplica por var_exp** (mismo vector para todos los indicadores)
+3. **Se suma el resultado** → si los indicadores tienen contribuciones similares, los pesos terminan siendo iguales
+
+# SOLUCIÓN: Usar loadings absolutos ponderados
+
+Aquí hay dos métodos correctos:
+
+## MÉTODO 1: Pesos basados en el primer PC (más simple e interpretable)
+
+```{r}
+library(purrr)
+
+dimensiones <- iMeta %>%
+  filter(Level == 1) %>%
+  pull(Parent) %>%
+  unique()
+
+# ===== MÉTODO 1: Usar el PRIMER PC =====
+pesos_pca_L1_metodo1 <- map_df(dimensiones, function(dim) {
+  
+  inds_dim <- iMeta %>%
+    filter(Level == 1, Parent == dim) %>%
+    pull(iCode)
+  
+  # Seleccionar indicadores de esta dimensión
+  df_dim <- df_norm_todos %>%
+    select(any_of(inds_dim)) %>%
+    # Para ECO usamos solo los no redundantes
+    { if (dim == "ECO") select(., any_of(indicadores_eco_finales)) else . } %>%
+    select(where(~ var(.x, na.rm = TRUE) > 1e-10))
+  
+  if (ncol(df_dim) < 2) return(NULL)
+  
+  pca_dim <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  
+  # USAR EL PRIMER PC (explica más varianza)
+  primer_pc_loadings <- abs(pca_dim$rotation[, 1])
+  pesos_norm <- primer_pc_loadings / sum(primer_pc_loadings)
+  
+  tibble(
+    iCode        = colnames(df_dim),
+    Parent       = dim,
+    PC1_Loading  = round(pca_dim$rotation[, 1], 4),  # Loading sin abs para ver dirección
+    Abs_Loading  = round(primer_pc_loadings, 4),
+    Weight_PCA   = round(pesos_norm, 4),
+    Varianza_PC1 = round(summary(pca_dim)$importance[2, 1], 4)
+  )
+})
+
+cat("\n=== MÉTODO 1: Pesos basados en PC1 ===\n")
+print(pesos_pca_L1_metodo1 %>% arrange(Parent, desc(Weight_PCA)), n = 100)
+
+# Verificar que los pesos sumen 1 dentro de cada dimensión
+cat("\nVerificación - Suma de pesos por dimensión:\n")
+print(pesos_pca_L1_metodo1 %>% 
+  group_by(Parent) %>% 
+  summarise(Total = sum(Weight_PCA), n_indicators = n()))
+```
+
+## MÉTODO 2: Pesos basados en varianza explicada acumulada (más riguroso)
+
+```{r}
+# ===== MÉTODO 2: Varianza explicada acumulada =====
+pesos_pca_L1_metodo2 <- map_df(dimensiones, function(dim) {
+  
+  inds_dim <- iMeta %>%
+    filter(Level == 1, Parent == dim) %>%
+    pull(iCode)
+  
+  df_dim <- df_norm_todos %>%
+    select(any_of(inds_dim)) %>%
+    { if (dim == "ECO") select(., any_of(indicadores_eco_finales)) else . } %>%
+    select(where(~ var(.x, na.rm = TRUE) > 1e-10))
+  
+  if (ncol(df_dim) < 2) return(NULL)
+  
+  pca_dim <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  var_exp  <- pca_dim$sdev^2 / sum(pca_dim$sdev^2)  # Varianza de CADA componente
+  
+  # Calcular la contribución de cada indicador a CADA PC
+  loadings_sq  <- pca_dim$rotation^2  # Correlación cuadrada
+  
+  # Peso = suma ponderada de contribuciones a todos los PCs
+  pesos <- as.vector(loadings_sq %*% var_exp)
+  pesos_norm <- pesos / sum(pesos)
+  
+  tibble(
+    iCode        = colnames(df_dim),
+    Parent       = dim,
+    Weight_PCA   = round(pesos_norm, 4),
+    Max_PC_Var   = round(var_exp[1], 4),  # Varianza del PC con más varianza
+    n_components = ncol(pca_dim$rotation)
+  )
+})
+
+cat("\n=== MÉTODO 2: Varianza acumulada ponderada ===\n")
+print(pesos_pca_L1_metodo2 %>% arrange(Parent, desc(Weight_PCA)), n = 100)
+
+# Verificar que los pesos sumen 1 dentro de cada dimensión
+cat("\nVerificación - Suma de pesos por dimensión:\n")
+print(pesos_pca_L1_metodo2 %>% 
+  group_by(Parent) %>% 
+  summarise(Total = sum(Weight_PCA), n_indicators = n()))
+```
+
+# COMPARAR LOS DOS MÉTODOS
+
+```{r comparar_metodos}
+comparacion <- pesos_pca_L1_metodo1 %>%
+  select(iCode, Parent, Weight_PCA) %>%
+  rename(Metodo1 = Weight_PCA) %>%
+  left_join(
+    pesos_pca_L1_metodo2 %>%
+      select(iCode, Parent, Weight_PCA) %>%
+      rename(Metodo2 = Weight_PCA),
+    by = c("iCode", "Parent")
+  ) %>%
+  mutate(Diferencia = abs(Metodo1 - Metodo2))
+
+cat("\n=== COMPARACIÓN DE MÉTODOS ===\n")
+print(comparacion %>% arrange(Parent), n = 100)
+
+# Si son iguales, ambos dan el mismo resultado
+if (all(comparacion$Diferencia < 0.0001)) {
+  cat("\n✓ Ambos métodos dan resultados similares\n")
+} else {
+  cat("\n! Métodos dan resultados diferentes\n")
+}
+```
+
+# PASO 2: Pesos de las dimensiones (cargar su aporte al índice final)
+
+```{r pesos_dimensiones}
+# Opción A: Pesar dimensiones por cantidad de indicadores
+pesos_dims_A <- tibble(
+  iCode = iMeta %>% filter(Level == 2) %>% pull(iCode),
+  Weight_Equal = 1/3  # 3 dimensiones
+)
+
+# Opción B: Pesar dimensiones por varianza explicada en PCA global
+df_global_pca <- df_norm_todos
+pca_global <- prcomp(df_global_pca, center = TRUE, scale. = TRUE)
+var_exp_global <- pca_global$sdev^2 / sum(pca_global$sdev^2)
+
+# Contribución de cada dimensión al primer PC
+contrib_by_dim <- map_df(dimensiones, function(dim) {
+  inds <- iMeta %>% filter(Level == 1, Parent == dim) %>% pull(iCode)
+  inds_activos <- intersect(inds, colnames(df_global_pca))
+  
+  loadings_dim <- pca_global$rotation[inds_activos, 1]
+  contrib <- sum(abs(loadings_dim)) / sum(abs(pca_global$rotation[, 1]))
+  
+  tibble(iCode = dim, Contrib_to_PC1 = contrib)
+})
+
+pesos_dims_B <- contrib_by_dim %>%
+  mutate(Weight_Variance = Contrib_to_PC1 / sum(Contrib_to_PC1))
+
+cat("\n=== PESOS DE DIMENSIONES ===\n")
+cat("\nOpción A: Iguales (1/3 cada una)\n")
+print(pesos_dims_A)
+
+cat("\nOpción B: Ponderados por varianza explicada\n")
+print(pesos_dims_B %>% select(iCode, Weight_Variance))
+```
+
+# PASO 3: Construcción del índice final
+
+```{r indice_final}
+# Índice considerando:
+# 1. Pesos de indicadores dentro de dimensiones (Método 1)
+# 2. Pesos de dimensiones (Opción B)
+
+indice_final <- df_norm_todos %>%
+  rownames_to_column("obs_id") %>%
+  # Calcular score por dimensión
+  mutate(
+    ECO_score = {
+      pesos_eco <- pesos_pca_L1_metodo1 %>% 
+        filter(Parent == "ECO") %>%
+        select(iCode, Weight_PCA)
+      rowSums(select(cur_data(), any_of(pesos_eco$iCode)) * 
+              rep(pesos_eco$Weight_PCA, length(pesos_eco$iCode)))
+    },
+    
+    ENV_score = {
+      pesos_env <- pesos_pca_L1_metodo1 %>% 
+        filter(Parent == "ENV") %>%
+        select(iCode, Weight_PCA)
+      if (nrow(pesos_env) > 0) {
+        rowSums(select(cur_data(), any_of(pesos_env$iCode)) * 
+                rep(pesos_env$Weight_PCA, length(pesos_env$iCode)))
+      } else { 0 }
+    },
+    
+    SOC_score = {
+      pesos_soc <- pesos_pca_L1_metodo1 %>% 
+        filter(Parent == "SOC") %>%
+        select(iCode, Weight_PCA)
+      if (nrow(pesos_soc) > 0) {
+        rowSums(select(cur_data(), any_of(pesos_soc$iCode)) * 
+                rep(pesos_soc$Weight_PCA, length(pesos_soc$iCode)))
+      } else { 0 }
+    }
+  ) %>%
+  # Agregar dimensiones con sus pesos
+  mutate(
+    pesos_dim <- pesos_dims_B %>% column_to_rownames("iCode"),
+    indice_sintético = 
+      ECO_score * pesos_dim["ECO", "Weight_Variance"] +
+      ENV_score * pesos_dim["ENV", "Weight_Variance"] +
+      SOC_score * pesos_dim["SOC", "Weight_Variance"]
+  ) %>%
+  select(obs_id, ECO_score, ENV_score, SOC_score, indice_sintético)
+
+cat("\nÍndice final calculado:\n")
+print(head(indice_final, 10))
+```
+
+# RECOMENDACIÓN
+
+**Usa MÉTODO 1** (basado en PC1) porque:
+- ✓ Es más interpretable
+- ✓ Respeta que indicadores con mayores loadings en el PC1 contribuyen más
+- ✓ Es más estable y robusto estadísticamente
+- ✓ Evita la acumulación de pequeños errores de redondeo
+

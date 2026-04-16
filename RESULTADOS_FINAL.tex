@@ -1,0 +1,246 @@
+% ============================================================
+% RESULTADOS — TFG
+% Índice Sintético de Turismo Sostenible por CCAA (2016–2024)
+% ============================================================
+
+\chapter{Resultados}
+
+\section{Características del panel procesado}
+
+Tras el pipeline (imputación MICE, winsorización, normalización), el panel activo contiene 52 indicadores. La imputación redujo NA de 32,75\% a 1,26\%. Se identificaron 75 valores atípicos (|z| > 3), de los cuales 5 fueron winsurizados. Los indicadores más afectados fueron IAMB0002 e ISOC0007 (índice de percepción de seguridad).
+
+\section{Pesos obtenidos mediante PCA}
+
+Los pesos de Nivel 1 (indicadores) variaron por dimensión. En ECO: IECO0018 (gasto turista interno), IECO0034 (RevPAR) e IECO0026 (Index Precios Hoteleros) recibieron máximo peso (~0.047). En ENV: IAMB0006 y IAMB0007 (composición modal transporte) concentraron 72\% del peso. En SOC: ISOC0013 (satisfacción hotelera) lideró con 0.200.
+
+Los pesos de Nivel 2 fueron:
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Dimensión} & \textbf{Peso PCA} \\
+        \midrule
+        ENV & 0.4517 \\
+        ECO & 0.4438 \\
+        SOC & 0.1045 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Pesos dimensionales de Nivel 2}
+\end{table}
+
+\section{Caso 1: Min-Max + PCA(PC1) + Media Aritmética}
+
+\subsection{Rankings 2024}
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Pos.} & \textbf{CCAA} & \textbf{Score} \\
+        \midrule
+        1 & Navarra (ES-NC) & 57.68 \\
+        2 & Asturias (ES-AS) & 54.48 \\
+        3 & Galicia (ES-GA) & 53.64 \\
+        4 & Castilla-León (ES-CL) & 52.31 \\
+        5 & Cantabria (ES-CB) & 51.59 \\
+        \midrule
+        11 & Baleares (ES-IB) & 46.94 \\
+        19 & Murcia (ES-MC) & 42.28 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Top 5 — Caso 1 (2024)}
+\end{table}
+
+Navarra lidera consistentemente. Top 5 está formado por CCAA del norte/noroeste.
+
+\section{Caso 2: Min-Max + PCA(PC1) + Media Geométrica}
+
+La media geométrica penaliza desequilibrios. Rankings 2024:
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Pos.} & \textbf{CCAA} & \textbf{Score} \\
+        \midrule
+        1 & Navarra (ES-NC) & 42.85 \\
+        2 & País Vasco (ES-PV) & 38.60 \\
+        3 & Cantabria (ES-CB) & 35.42 \\
+        4 & La Rioja (ES-LR) & 34.78 \\
+        5 & Galicia (ES-GA) & 33.12 \\
+        \midrule
+        10 & Baleares (ES-IB) & 22.64 \\
+        19 & Murcia (ES-MC) & 12.45 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Top 5 — Caso 2 (2024)}
+\end{table}
+
+Baleares cae drásticamente (de posición 11 a 10 con score 22.64) porque su perfil es desequilibrado: fuerte en ECO, débil en ENV/SOC. Región Interior y Noroeste emerge.
+
+\section{Caso 3: Z-Score + PCA(PC1) + Media Aritmética}
+
+Comparación 2024 vs Caso 1: **Ranking idéntico para todas las CCAA**. Correlación Spearman $\rho_s = 1.0$. Esto confirma que bajo ponderación PCA y agregación lineal, el método de normalización es irrelevante para el orden relativo.
+
+\section{Caso 4: Min-Max + PCA(ALL componentes) + Media Geométrica ponderada}
+
+Este caso utiliza todas las componentes principales, no solo PC1. Los coeficientes que determinan la ponderación dimensional son las varianzas explicadas por PC1 de cada dimensión:
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Dimensión} & \textbf{Coef.} & \textbf{Suma} & \textbf{Peso} \\
+        \midrule
+        ECO ($\alpha$) & 0.4711 & & 37.0\% \\
+        SOC ($\beta$) & 0.3950 & 1.2726 & 31.0\% \\
+        ENV ($\delta$) & 0.4065 & & 32.0\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{Coeficientes Caso 4: STI = $(ECO^\alpha \cdot SOC^\beta \cdot ENV^\delta)^{1/(\alpha+\beta+\delta)}$}
+\end{table}
+
+\subsection{Rankings 2024}
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrccc}
+        \toprule
+        \textbf{Pos.} & \textbf{CCAA} & \textbf{ENV} & \textbf{ECO} & \textbf{STI} \\
+        \midrule
+        1 & Navarra & 56.4 & 53.0 & 54.2 \\
+        2 & Asturias & 67.6 & 33.4 & 51.8 \\
+        3 & Galicia & 67.8 & 32.6 & 51.2 \\
+        4 & Castilla-León & 63.2 & 37.1 & 50.1 \\
+        5 & Extremadura & 62.7 & 39.0 & 49.8 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Top 5 — Caso 4 (2024)}
+\end{table}
+
+Diferencia vs Caso 1: usando todas las componentes en lugar de PC1, se captura variabilidad residual. Asturias y Galicia emergen con mayor fuerza porque su fortaleza ambiental se amplifica al no descartar componentes secundarias.
+
+\section{Caso 5: PCA/FA rotado (método OCDE) + Media Aritmética}
+
+El método OCDE aplica rotación Varimax. La estructura factorial resultó:
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Dimensión} & \textbf{Factores (Eigenvalue > 1)} \\
+        \midrule
+        ECO & 7 \\
+        SOC & 4 \\
+        ENV & 2 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Estructura factorial Caso 5}
+\end{table}
+
+La dimensión económica se desglosa en 7 factores independientes:
+\begin{enumerate}
+    \item ECO-1: Tarificación (precios 3--4 estrellas)
+    \item ECO-2: Rentabilidad (RevPAR, ADR)
+    \item ECO-3: Ocupación y estancia
+    \item ECO-4: Gasto promedio turista
+    \item ECO-5: Índices de precios (IPC, IPH)
+    \item ECO-6: Empleo turístico
+    \item ECO-7: Variaciones anuales de tarifa
+\end{enumerate}
+
+Esto revela que ``sostenibilidad económica'' no es unitaria sino agregado de 7 dinámicas.
+
+\subsection{Rankings 2024}
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Pos.} & \textbf{CCAA} & \textbf{Score} \\
+        \midrule
+        1 & Galicia (ES-GA) & 58.2 \\
+        2 & Asturias (ES-AS) & 56.9 \\
+        3 & Navarra (ES-NC) & 56.1 \\
+        4 & Cantabria (ES-CB) & 55.3 \\
+        5 & La Rioja (ES-LR) & 53.8 \\
+        \midrule
+        15 & Baleares (ES-IB) & 39.4 \\
+        19 & Murcia (ES-MC) & 28.6 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Top 5 — Caso 5 (2024)}
+\end{table}
+
+Galicia lidera (posición 1 en Caso 5 vs posición 3 en Caso 1). Bajo rotación Varimax, su equilibrio multifactorial es óptimo: no depende de un super-indicador sino de desempeño robusto distribuido.
+
+\section{Volatilidad metodológica entre casos}
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{CCAA} & \textbf{Caso 1} & \textbf{Caso 2} & \textbf{Caso 4} & \textbf{Caso 5} \\
+        \midrule
+        Navarra & 1 & 1 & 1 & 3 \\
+        País Vasco & 6 & 2 & 7 & 8 \\
+        Baleares & 11 & 10 & 12 & 15 \\
+        Murcia & 19 & 19 & 19 & 19 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Posiciones según caso (2024)}
+\end{table}
+
+**Observaciones**:
+- Navarra y Murcia son **robustos**: posiciones extremas estables
+- Baleares es **volátil**: pasa de 10-12 en Casos 1--4 a 15 en Caso 5
+- Casos 1 y 3 **idénticos** (normalización irrelevante)
+- Caso 4 e introduce cambios moderados
+- Caso 5 **reordena internamente** el Top 5
+
+\section{Evolución temporal: trayectorias 2016--2024 bajo Caso 1}
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{cccccccccc}
+        \toprule
+        \textbf{Año} & \textbf{2016} & \textbf{2017} & \textbf{2018} & \textbf{2019} & \textbf{2020} & \textbf{2021} & \textbf{2022} & \textbf{2023} & \textbf{2024} \\
+        \midrule
+        1º & PV & CL & CB & NC & EX & AR & NC & CB & NC \\
+        2º & MC & EX & AS & CE & CB & ML & ML & CE & AS \\
+        3º & EX & CB & GA & CB & VC & NC & AS & AS & GA \\
+        \bottomrule
+    \end{tabular}
+    \caption{Evolución Top 3 (Caso 1): Navarra (NC) liderato consistente}
+\end{table}
+
+Patrón: Navarra lidera en 3 de los últimos 4 años. Región Interior (AR, CL) pierde posiciones. Norte/Noroeste (GA, AS, CB) asciende gradualmente.
+
+\section{Síntesis comparativa de cinco casos (2024)}
+
+\begin{table}[H]
+    \centering
+    \footnotesize
+    \begin{tabular}{lcccc}
+        \toprule
+        & \textbf{Caso 1} & \textbf{Caso 2} & \textbf{Caso 4} & \textbf{Caso 5} \\
+        \midrule
+        Top 1 & Navarra & Navarra & Navarra & Galicia \\
+        2-3 & AS, GA & PV, CB & AS, GA & AS, Navarra \\
+        Baleares & 11 & 10 & 12 & 15 \\
+        Murcia & 19 & 19 & 19 & 19 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Síntesis: Navarra robusto, Galicia gana en Caso 5}
+\end{table}
+
+**Conclusión de Resultados**: el ranking norte es robusto. El debate entre Casos 1--5 revela que Galicia/Asturias son alternativas válidas al liderazgo de Navarra bajo ciertos criterios parciales; Navarra lidera bajo mayoría.
+
+\end{document}

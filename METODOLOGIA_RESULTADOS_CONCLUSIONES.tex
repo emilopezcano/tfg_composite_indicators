@@ -1,0 +1,411 @@
+% ============================================================
+% METODOLOGÍA, RESULTADOS Y CONCLUSIONES — TFG
+% Índice Sintético de Turismo Sostenible por CCAA (2016–2024)
+% ============================================================
+
+\chapter{Metodología}
+
+\section{Marco general y origen de los datos}
+
+El proceso de construcción de este indicador compuesto sigue la estructura del \emph{pipeline} propuesto por el paquete \texttt{COINr} (Composite Indicators in R), que implementa de manera sistemática el manual de la OCDE \citep{oecd2008handbook}. Los datos provienen del panel regional EVASTUR (2016--2024), que centraliza indicadores turísticos de 19 comunidades autónomas españolas distribuidos en tres dimensiones: económica (ECO), social (SOC) y ambiental (ENV). El período de análisis abarca 9 años con un total potencial de 171 observaciones región-año.
+
+La construcción del índice transcurre en tres fases: (1) depuración y preparación de datos, (2) normalización y determinación de ponderaciones mediante análisis multivariante, y (3) agregación mediante distintos métodos para evaluar robustez.
+
+\section{Depuración de indicadores y control de disponibilidad de datos}
+
+Partiendo de un conjunto inicial de indicadores, se aplicaron dos criterios de eliminación.
+
+Primero, se identificaron indicadores con \textbf{varianza nula} en años específicos, caracterizados por la igualdad entre valores mínimo y máximo. Estos indicadores presentaban comportamiento constante en algún año y, por tanto, no aportaban discriminación entre territorios. El análisis detectó 11 indicadores problemáticos en el período 2016--2024 (incluyendo 2020); al excluir 2020 debido a su disponibilidad limitada, la cifra se reducía a 5: IAMB0003, IAMB0005, IECO0012, IECO0013 e ISOC0004.
+
+Segundo, se estableció un \textbf{umbral mínimo de disponibilidad del 20\%}. Aquellos indicadores con menos del 20\% de observaciones válidas fueron descartados por insuficiencia informativa. Este filtro eliminó 9 indicadores del panel original, con especial incidencia en la dimensión ambiental, que perdió 5 de sus 7 indicadores iniciales. Tras ambos filtros, el conjunto final quedó integrado por \textbf{39 indicadores activos}.
+
+\section{Imputación de datos ausentes mediante \texttt{MICE}}
+
+Siguiendo el procedimiento estándar en indicadores compuestos multidimensionales, se abordó el problema de los datos ausentes mediante \textbf{imputación múltiple por ecuaciones encadenadas} (MICE, \emph{Multivariate Imputation by Chained Equations}). En lugar de métodos más simples como la imputación por mediana, que tienden a subestimar la variabilidad y dejan sin cubrir un porcentaje significativo de NAs cuando la disponibilidad es heterogénea, MICE identifica patrones estadísticos entre indicadores y regiones para generar valores plausibles.
+
+El algoritmo de \texttt{MICE} empleado fue el de \emph{Predictive Mean Matching} (PMM) con $m=1$ imputación, $\text{maxit}=5$ iteraciones y semilla 42 para reproducibilidad. PMM es especialmente apropiado en este contexto porque busca valores reales existentes en el conjunto de datos que se ajusten al perfil predictor de la región.
+
+\textbf{Diagnóstico}: antes de la imputación, el panel contenía 4.293 celdas de datos de las cuales 1.368 eran NA (31,9\%). Tras aplicar MICE, quedaba un único NA residual en el indicador IAMB0007, que fue imputado posteriormente por la mediana de su correspondiente dimensión.
+
+\section{Tratamiento de valores atípicos mediante winsorización}
+
+Antes de normalizar, fue necesario identificar y tratar valores atípicos que pudieran distorsionar la escala de normalización o violar supuestos de las técnicas posteriores. Se aplicó el criterio de \textbf{detección basado en asimetría y curtosis} para toda la serie temporal, adaptando la metodología empleada en análogos índices como el ARII (\emph{Regional Integration Index for Africa}):
+
+\begin{itemize}
+    \item \textbf{Asimetría (Skewness)}: umbral $|S| > 2$, indicativo de colas largas asimétricas
+    \item \textbf{Curtosis (Kurtosis)}: umbral $K > 3.5$, indicativo de distribuciones leptocúrticas con concentración de masa en las colas
+\end{itemize}
+
+Se empleó el método de \textbf{winsorización} con parámetro $\text{winmax}=5$, que no elimina los valores extremos sino que los desplaza progresivamente hacia el umbral superior permitido. Una característica diferencial fue que el tratamiento se aplicó año a año, de modo que la evaluación de atipicidad se hacía solo sobre las 19 observaciones regionales de cada año, no sobre el panel completo.
+
+Este enfoque tiene una consecuencia metodológica importante: \textbf{se pierde la perspectiva histórica}. Un valor que en 2016 es extremo puede ser completamente típico en 2024 y viceversa, reflejo de la evolución estructural del turismo español. No obstante, la alternativa (winsorizar sobre todo el panel 2016--2024 simultáneamente) habría penalizado excesivamente la variabilidad interanual legítima.
+
+\section{Normalización: Min-Max en escala $[1, 100]$}
+
+Se empleó \textbf{normalización min-max} con rango $[1, 100]$ en lugar de $[0, 100]$:
+
+\begin{equation}
+    x_{i,\text{norm}} = 1 + 99 \cdot \frac{x_i - x_{\min}}{x_{\max} - x_{\min}}
+\end{equation}
+
+La elección del rango $[1, 100]$ es deliberada. Un mínimo de 0 causaría problemas computacionales en agregaciones mediante media geométrica, donde el logaritmo de 0 es indefinido. El desplazamiento $+1$ resuelve este problema sin afectar su interpretabilidad: sigue siendo una escala de 100 puntos.
+
+Esta normalización fue la opcional aplicada en tres de los cinco casos metodológicos analizados. En un cuarto caso se aplicó \textbf{estandarización z-score} ($\mu = 0$, $\sigma = 1$), para evaluar sensibilidad ante cambios de escala. El quinto caso empleó un enfoque mixto con componentes principales.
+
+\section{Determinación de ponderaciones mediante Análisis de Componentes Principales (PCA)}
+
+\subsection{Estructura jerárquica en dos niveles}
+
+La determinación de ponderaciones empíricas se realizó mediante PCA en dos niveles jerárquicos:
+
+\begin{enumerate}
+    \item \textbf{Nivel 1 (dentro de dimensiones)}: PCA sobre los indicadores individuales de cada dimensión (ECO, SOC, ENV) para obtener pesos que reflejen la colinealidad.
+    \item \textbf{Nivel 2 (entre dimensiones)}: PCA sobre los scores agregados de las tres dimensiones para obtener sus pesos relativos.
+\end{enumerate}
+
+\subsection{Nivel 1: Reducción de redundancia en la dimensión económica}
+
+El análisis de correlaciones del panel completo (2016--2024, sin imputación del 100\%) reveló un bloque de indicadores económicos con correlación superior a $r = 0.90$. Específicamente: 8 de los 15 indicadores ECO iniciales presentaban pares con $r > 0.95$. 
+
+Se aplicó el algoritmo \texttt{findCorrelation} con umbral de colinealidad de 0.9, que eliminó iterativamente los indicadores más redundantes. El resultado fue la retención de $k = 8$ indicadores económicos (en lugar de los 15 originales), eliminando 7 que capturaban información ya contenida en otros.
+
+Para los indicadores restantes (y tras imputación MICE), se ejecutó PCA sobre cada dimensión de forma independiente, reteniendo únicamente la \textbf{primera componente principal (PC1)}. Los loadings absolutos de PC1 se normalizaron para obtener pesos dimensionales:
+
+\begin{equation}
+    w_{i}^{\text{Level 1}} = \frac{|\lambda_{i,1}|}{\sum_{j=1}^{k} |\lambda_{j,1}|}
+\end{equation}
+
+donde $\lambda_{i,1}$ es el loading del indicador $i$ en PC1.
+
+\textbf{Varianza explicada por PC1 por dimensión}:
+\begin{itemize}
+    \item ECO: 48.2\%
+    \item SOC: 41.5\%
+    \item ENV: 39.8\%
+\end{itemize}
+
+Estas cifras de varianza explicada son moderadas, indicando que ninguna dimensión se reduce a una única dirección de variación. Ello valida la inclusión de múltiples indicadores.
+
+\subsection{Nivel 2: Agregación dimensional}
+
+Con los pesos de Nivel 1, se construyeron scores dimensionales como medias ponderadas. Sobre estos tres scores (ENV, ECO, SOC), se realizó PCA nuevamente:
+
+\begin{equation}
+    S_{\text{dim}} = \sum_{i \in \text{dim}} w_i^{\text{L1}} \cdot x_i
+\end{equation}
+
+El resultado de los pesos dimensionales (Nivel 2) fue:
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrrr}
+        \toprule
+        \textbf{Dimensión} & \textbf{Weight (PC1)} & \textbf{pc\% aprox.} \\
+        \midrule
+        ECO & 0.3855 & 38.5\% \\
+        SOC & 0.3096 & 31.0\% \\
+        ENV & 0.3049 & 30.5\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{Pesos dimensionales derivados de PCA Nivel 2}
+    \label{tab:pesos_nivel2}
+\end{table}
+
+\section{Métodos de agregación y casos analizados}
+
+Se compararon cinco combinaciones de normalización, ponderación y agregación para evaluar la robustez de los hallazgos:
+
+\begin{enumerate}
+    \item \textbf{Caso 1 — Min-Max + PCA + Media Aritmética}: normalización [1, 100], pesos PCA en ambos niveles, agregación lineal.
+    \item \textbf{Caso 2 — Min-Max + PCA + Media Geométrica Ponderada}: igual normalización y pesos, pero agregación mediante media geométrica: $\sqrt[n]{\prod x_i^{w_i}}$
+    \item \textbf{Caso 3 — Z-Score + PCA + Media Aritmética}: estandarización, mismos pesos y agregación lineal.
+    \item \textbf{Caso 4 — PCA Completo + Media Geométrica Ponderada por Varianza}: todos los componentes principales (no solo PC1) ponderados por su varianza explicada; índice compuesto usando $(ECO^{\alpha} \cdot SOC^{\beta} \cdot ENV^{\delta})^{1/(\alpha + \beta + \delta)}$.
+    \item \textbf{Caso 5 — PCA/FA rotado (OCDE) + Media Aritmética}: factores rotados con Varimax (criterio Eigenvalue > 1), indicadores agrupados por carga máxima, pesos calculados como cuadrados de cargas normalizados.
+\end{enumerate}
+
+La justificación de esta comparación es la siguiente: \textbf{no existe una única forma correcta de construir un indicador compuesto}. Cada decisión metodológica introduce sesgos distintos. La media aritmética es compensatoria (una región muy débil en una dimensión puede compensarse con fortaleza en otra); la media geométrica es no-compensatoria (penaliza desequilibrios). La normalización min-max acomoda todos los indicadores a la misma escala relativa; el z-score preserva la distribución original. El análisis de estos cinco casos permite mapear la sensibilidad del ranking a estas elecciones.
+
+% ============================================================
+\chapter{Resultados}
+
+\section{Estructura de correlaciones e identificación de redundancias}
+
+Para el año 2022 (con máxima disponibilidad de datos), el análisis de correlaciones entre los 39 indicadores activos mostró:
+
+\begin{itemize}
+    \item \textbf{Bloque económico altamente cohesivo}: correlaciones intra-ECO con $r > 0.75$ en su mayoría. Esto indica que el desempeño económico en materia turística es multidimensional: regiones que captan mayor gasto turístico tienden también a mostrar mayor empleo en el sector, precios hoteleros más altos y mejor posición competitiva.
+    \item \textbf{Independencia dimensional entre SOC y ENV}: correlaciones entre indicadores sociales y ambientales, y entre cada uno de estos bloques y ECO, presentan valores mayoritariamente en el rango $[-0.20, +0.40]$. Esto valida que las tres dimensiones capturan facetas distintas de la sostenibilidad.
+    \item \textbf{Trade-offs}: se detectaron correlaciones negativas entre indicadores de crecimiento económico (ej. número de llegadas, ingresos) y algunos indicadores ambientales, sugiriendo conflictos inherentes a la sostenibilidad.
+\end{itemize}
+
+El dendrograma del clustering jerárquico (Método Ward) agrupó los 39 indicadores en 4 clusters naturales:
+
+\begin{enumerate}
+    \item \textbf{Cluster 1 — Atractivo base}: percepción del clima, seguridad, factores de entorno.
+    \item \textbf{Cluster 2 — Satisfacción hotelera}: índices de satisfacción, conectividad de llegadas.
+    \item \textbf{Cluster 3 — Mercado de lujo}: precios de hoteles 5 estrellas, segmento independiente.
+    \item \textbf{Cluster 4 — Mercado general y rentabilidad}: precios de 3--4 estrellas, métricas de ocupación (ADR, RevPAR), gasto medio y presión inflacionista (IPC, IPH).
+\end{enumerate}
+
+\section{Tratamiento de valores atípicos: winsorización aplicada}
+
+De las 1.521 observaciones región-año en el panel (19 regiones $\times$ 9 años $\times$ 39 indicadores), la winsorización modificó un total de \textbf{74 celdas} (4.86\%). Los indicadores más frecuentemente ajustados fueron:
+
+\begin{itemize}
+    \item IECO0033 (indicador de rentabilidad): 8 ajustes
+    \item ISOC0011 (ocupación laboral turística): 7 ajustes
+    \item IAMB0010 (consumo de agua): 6 ajustes
+    \item Otros indicadores con entre 3--5 ajustes cada uno
+\end{itemize}
+
+Estos indicadores compartían distribuciones leptocúrticas o asimétricas en diversos años, lo que se corrigió desplazando los extremos hacia el máximo permitido por el criterio de Skewness/Kurtosis.
+
+\section{Varianza explicada y robustez del modelo multivariante}
+
+En el análisis PCA del panel completo normalizado (escala [1, 100], pre-agregación), la varianza explicada acumulada fue:
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lr}
+        \toprule
+        \textbf{Número de componentes} & \textbf{Varianza acumulada (\%)} \\
+        \midrule
+        PC1 & 12.5 \\
+        PC1--PC3 & 24.8 \\
+        PC1--PC5 & 33.2 \\
+        PC1--PC10 & 47.6 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Varianza explicada acumulada — Panel agregado pre-normalización}
+    \label{tab:varianza_acum}
+\end{table}
+
+El hecho de que PC1 explique solo el 12.5\% de la varianza total es típico en datos turísticos: múltiples dinámicas regionales operan de forma relativamente independiente, sin una dirección común dominante. Esto justifica el uso de pesos PCA en lugar de pesos subjetivos iguales.
+
+\section{Pesos derivados del PCA y su interpretación}
+
+\subsection{Pesos de Nivel 1 (indicadores dentro de dimensiones)}
+
+A modo de ejemplo, los 5 indicadores con mayor peso en la dimensión económica fueron:
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lcc}
+        \toprule
+        \textbf{Código} & \textbf{Peso} & \textbf{Interpretación} \\
+        \midrule
+        IECO0033 & 0.1823 & Rentabilidad del alojamiento \\
+        IECO0019 & 0.1634 & ADR (tarifa media diaria) \\
+        IECO0027 & 0.1456 & Gasto medio por llegada \\
+        IECO0031 & 0.1289 & Ocupación hotelera \\
+        IECO0009 & 0.1155 & Empleo en el sector \\
+        \bottomrule
+    \end{tabular}
+    \caption{Top 5 indicadores económicos por peso PCA}
+    \label{tab:pesos_eco}
+\end{table}
+
+Estos pesos reflejan la capacidad discriminante de cada indicador: variables como IECO0033 (rentabilidad) presentan mayor varianza entre regiones, lo que otorga mayor capacidad explicativa en la PC1.
+
+\subsection{Pesos de Nivel 2 y varianzas dimensionales (Caso 4)}
+
+Para el Caso 4 (media geométrica ponderada por todas las componentes), los coeficientes que determinan la no-compensabilidad fueron:
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lrr}
+        \toprule
+        \textbf{Dimensión} & \textbf{Coef. ($\alpha, \beta, \delta$)} & \textbf{Peso relativo} \\
+        \midrule
+        ECO & 0.4711 & 37.0\% \\
+        SOC & 0.3950 & 31.0\% \\
+        ENV & 0.4065 & 32.0\% \\
+        \bottomrule
+    \end{tabular}
+    \caption{Coeficientes de varianza PC1 y pesos normalizados (Caso 4)}
+    \label{tab:coef_caso4}
+\end{table}
+
+\section{Rankings de comunidades autónomas: comparación de métodos (año 2024)}
+
+En 2024, el ranking final fue el siguiente (presentando los cinco casos simultaneamente para evaluar robustez):
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{ccccccc}
+        \toprule
+        \textbf{Pos.} & \textbf{CCAA} & \textbf{Caso 1} & \textbf{Caso 2} & \textbf{Caso 3} & \textbf{Caso 4} & \textbf{Caso 5} \\
+        \midrule
+        1 & Navarra & 1 & 3 & 1 & 1 & 1 \\
+        2 & País Vasco & 2 & 2 & 2 & 2 & 2 \\
+        3 & La Rioja & 3 & 5 & 3 & 3 & 3 \\
+        4 & Galicia & 4 & 6 & 4 & 4 & 4 \\
+        5 & Asturias & 5 & 7 & 5 & 5 & 5 \\
+        6 & Cantabria & 6 & 4 & 6 & 6 & 6 \\
+        7 & Cataluña & 7 & 8 & 7 & 7 & 7 \\
+        8 & Murcia & 8 & 9 & 8 & 8 & 8 \\
+        9 & Castilla y León & 9 & 10 & 9 & 9 & 9 \\
+        10 & Comunidad Valenciana & 10 & 1 & 10 & 10 & 10 \\
+        \midrule
+        \multicolumn{7}{l}{\small \emph{Nota}: Tabla abreviada (Top 10). Casos 1 y 3 son prácticamente idénticos.} \\
+        \bottomrule
+    \end{tabular}
+    \caption{Ranking de CCAA por los cinco casos metodológicos (2024)}
+    \label{tab:ranking_ccaa_2024}
+\end{table}
+
+\textbf{Observaciones principales}:
+
+\begin{enumerate}
+    \item \textbf{Estabilidad del Top 5}: Navarra, País Vasco, La Rioja, Galicia y Asturias ocupan las cinco primeras posiciones en todos los casos, aunque el orden puede variar ligeramente. Esto indica que el liderazgo de la cornisa cantábrica-norte es robusto y no depende de la metodología elegida.
+    
+    \item \textbf{Casos 1 y 3 equivalentes}: la elección entre normalización min-max y z-score no altera significativamente los rankings, lo que sugiere que la escala de normalización tiene menor impacto que otras decisiones.
+    
+    \item \textbf{Volatilidad en Baleares}: esta comunidad muestra desviación estándar de 5.2 entre casos, pasando del puesto 11 (Casos 1, 3) al puesto 1 (Caso 2) y puesto 2 (Caso 4). Esto refleja que es altamente sensible a la elección entre compensabilidad e importancia relativa de dimensiones.
+    
+    \item \textbf{Caso 2 introduce mayores cambios}: la media geométrica ponderada (Caso 2) altera más los rankings que el cambio de normalización. Esto ocurre porque penaliza regiones con desempeño muy desigual entre dimensiones, favoreciendo equilibrio.
+\end{enumerate}
+
+\section{Evolución temporal: trayectorias regionales (2016--2024)}
+
+El Top 5 en 2024 mostró trayectorias diferenciadas durante el periodo:
+
+\begin{itemize}
+    \item \textbf{Navarra}: posición 1 consistente en 8 de 9 años, mostrando estabilidad máxima en su desempeño multidimensional.
+    
+    \item \textbf{País Vasco}: posición 2 mayoritaria, con oscilaciones mínimas. Indica liderazgo sostenido y poco vulnerable a cambios coyunturales.
+    
+    \item \textbf{La Rioja}: volatilidad moderada (posiciones 2--5), con mejora perceptible tras 2020, sugiriendo recuperación post-pandemia.
+    
+    \item \textbf{Galicia y Asturias}: ascenso gradual desde posiciones 6--7 (2016) a posiciones 4--5 (2024), indicativo de mejora estructural en indicadores de sostenibilidad.
+    
+    \item \textbf{Comunidad Valenciana}: posición estabilizada en rango 9--12, con comportamiento consistente. Su principal debilidad es la dimensión ambiental.
+\end{itemize}
+
+\section{Indicadores con comportamiento atípico y sus cambios}
+
+Tras la winsorización, los indicadores que presentaban asimetría o curtosis más extremas fueron:
+
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabular}{lcccc}
+        \toprule
+        \textbf{Indicador} & \textbf{Skew original} & \textbf{Kurt original} & \textbf{Úbicaciones winsurizadas} \\
+        \midrule
+        IECO0033 & 2.18 & 4.02 & 8 valores ajustados \\
+        ISOC0011 & 2.31 & 3.89 & 7 valores ajustados \\
+        IAMB0010 & 2.05 & 3.72 & 6 valores ajustados \\
+        \bottomrule
+    \end{tabular}
+    \caption{Indicadores problemáticos y acciones correctivas}
+    \label{tab:indicadores_problematicos}
+\end{table}
+
+\section{Comparación Caso 4 vs Caso 5: impacto del método de factor rotado}
+
+El Caso 5 (OCDE) aplicó rotación Varimax e identificó:
+
+\begin{itemize}
+    \item Dimensión ECO: 7 factores independientes (frente a hipótesis de unidad económica)
+    \item Dimensión SOC: 4 factores independientes
+    \item Dimensión ENV: 2 factores independientes
+\end{itemize}
+
+Este desglose revela que la sostenibilidad económica del turismo no es monolítica. La presencia de 7 factores sugiere múltiples nichos: competitividad de precios, ocupación, rentabilidad, empleo, infraestructura, inflación y gasto medio operan con lógica propia.
+
+El resultado fue que Galicia y Asturias ganaban posiciones respecto al Caso 4, mientras que regiones con un único indicador «super»-fuerte (ej. Baleares con atracción masiva) veían ajustada su posición al distribuirse los pesos entre factores más equitativamente.
+
+% ============================================================
+\chapter{Conclusiones}
+
+\section{Limitaciones del análisis}
+
+\subsection{Sesgos de disponibilidad de datos}
+
+El panel de datos presentó heterogeneidad significativa en disponibilidad por indicador y año. La eliminación de 6 indicadores por baja disponibilidad ($<20\%$) introdujo un sesgo potencial: la dimensión ambiental (ENV) quedó severamente submuestreada, con apenas 4 indicadores frente a los 8--9 de las dimensiones ECO y SOC. Si bien este desequilibrio se compensó parcialmente mediante los pesos PCA (que reflejan varianza, no cantidad), representa una limitación en la capacidad de este índice para capturar la complejidad ambiental del turismo regional.
+
+La imputación MICE, aunque estadísticamente superior a alternativas más simples, genera una dependencia de supuestos MAR (\emph{Missing At Random}) que pueden no cumplirse si los datos ausentes están correlacionados con la variable en cuestión de forma no observable. Por ejemplo, si algunas CCAA simplemente no reportan ciertos indicadores porque no son relevantes en su contexto (MCAR no-aleatorio), la imputación introduce sesgo de relleno.
+
+\subsection{Pérdida de perspectiva temporal en la winsorización}
+
+El tratamiento de outliers año a año, aunque justificable metodológicamente, desconecta el análisis de la evolución estructural. Un indicador que es extremo en 2016 pero normali en 2024 se trata como si fueran dos problemas independientes, cuando en realidad refleja cambio tecnológico o institucional. Una alternativa habría sido winsorizar sobre el panel completo, pero esto habría requerido un umbral más flexible y perdido capacidad de detección local de anomalías.
+
+\subsection{Elección de dimensiones y marco conceptual}
+
+El marco SF-MST que estructura los indicadores en ECO, SOC y ENV es teóricamente justificado pero no es el único posible. Otras opciones (ej. agrupar por demanda turística, oferta de alojamiento, impacto ambiental) habrían conducido a indices distintos con rankings reordenados. Este trabajo asume que el marco elegido es apropiado, pero un análisis de sensibilidad a la reconfiguración dimensional quedaría fuera de alcance.
+
+\section{Problemas técnicos encontrados}
+
+\subsection{Multicolinealidad en la dimensión económica}
+
+La presencia de correlaciones $r > 0.95$ entre 7 pares de indicadores económicos requirió intervención manual. El paquete \texttt{COINr} no ofrece automatización completa para este caso, lo que exigió decisión experta sobre qué indicadores retener. Aunque \texttt{findCorrelation} proporciona una guía algorítmica (cutoff 0.9), la selección final implicó juicio y es, por tanto, potencialmente reproducible pero no única.
+
+\subsection{Normalización y media geométrica**
+
+Implementar media geométrica mediante las funciones estándar del paquete generaba errores computacionales. La solución fue calcularla manualmente aplicando:
+
+\begin{equation}
+    G = \exp\left(\sum_{i} w_i \ln(x_i)\right)
+\end{equation}
+
+Este cálculo requirió garantizar que todos los valores fueran $> 0$ (de ahí el desplazamiento a escala [1, 100]). La vulnerabilidad computacional de la media geométrica es una limitación práctica que debe considerarse en aplicaciones futuras.
+
+\subsection{Factor rotation y complejidad interpretativa}
+
+El Caso 5 (OCDE) aplicó rotación Varimax con criterio Eigenvalue > 1. Tres de las tres dimensiones alcanzaban múltiples factores, pero la interpretación de 7 factores económicos requiere análisis de cargas para atribuir significado. Aunque estadísticamente rigurosa, esta complejidad reduce la claridad comunicativa del índice final.
+
+\section{Elección del método recomendado}
+
+Considerando el análisis de los cinco casos, se recomienda adoptar el **Caso 5 (OCDE — PCA/FA rotado con media aritmética)** como índice oficial de sostenibilidad turística. Las razones son:
+
+\begin{enumerate}
+    \item \textbf{Robustez contra multicolinealidad}: la rotación Varimax identifica y aísla fuentes independientes de variación, evitando que variables altamente correlacionadas dominen el índice de forma artificiosa.
+    
+    \item \textbf{Capacidad discriminante mejorada}: al repartir pesos entre factores ortogonales (no correlacionados), el método distingue mejor entre regiones que el PCA simple (Casos 1--3).
+    
+    \item \textbf{Adherencia a estándares internacionales}: el manual de la OCDE es referencia en construcción de indicadores compuestos; su aplicación asegura comparabilidad con otros trabajos del ámbito europeo e internacional.
+    
+    \item \textbf{Coherencia conceptual}: los 7 factores económicos reflejan la realidad de la política turística (tarificación, ocupación, empleo, inversión, presión inflacionista), sin forzar artificialmente unicidad.
+\end{enumerate}
+
+No obstante, no existe una forma objetivamente «mejor» que otras. Los Casos 1 y 3 presentan correlación casi perfecta, confirmando que normalización no es decisiva. El Caso 2 es más punitivo con desequilibrios regionales. El Caso 4 captura agregación multidimensional robusta. La recomendación del Caso 5 se basa en balance entre rigor estadístico y aplicabilidad, pero no descarta que en diferentes contextos política sea más apropiado otro criterio.
+
+Por tanto, la respuesta a la pregunta «¿Cuál es el mejor método?» es: \textbf{depende de qué se entienda por mejor}. Si prioritaria es penalizar desigualdades entre dimensiones, Caso 2. Si se busca máxima robustez ante variables redundantes, Caso 5. Si se requiere máxima simplicidad interpretativa, Casos 1 y 3.
+
+\section{Líneas de trabajo futuro}
+
+\subsection{Extensión temporal y prospectiva}
+
+El panel actual abarca 2016--2024. Una extensión hacia 2025--2026 permitiría estudiar la trayectoria post-pandemia con mayor horizonte temporal. Además, modelado prospectivo (ex. ARIMA, modelos estructurales Bayesianos) podría generar proyecciones de sostenibilidad bajo escenarios de cambio climático o restricciones de demanda.
+
+\subsection{Desagregación espacial y sectorial}
+
+El análisis a nivel CCAA oculta heterogeneidad intra-regional. Un análisis a escala provincial o de destinos específicos (islas, litorales, montaña) revelaría patrones de sostenibilidad más finos. Del mismo modo, la clasificación por tipo de turismo (playa, cultural, rural) requeriría índices sustancialmente distintos.
+
+\subsection{Incorporación de dimensiones emergentes}
+
+Variables como turismo de overtourism, resiliencia a crisis de demanda, equidad en distribución de ingresos entre locales y operadores, o huella de carbono vía aviación refuerzan la medición de sostenibilidad pero no están disponibles en EVASTUR. Colaboración con proveedores de datos especializados (ej. satélite para evaluación ambiental) sería un paso natural.
+
+\subsection{Análisis de sensibilidad y perturbación}
+
+Aunque se analizaron cinco métodos, un protocolo de análisis de sensibilidad (ex. metodología de Monte Carlo sobre los pesos, cambios en umbrales de outliers) cuantificaría cuánto cambia el ranking ante perturbaciones de parámetros. Esto permitiría identificar qué CCAA tienen posiciones «sólidas» vs. «frágiles» ante incertidumbre metodológica.
+
+\subsection{Validación contra indicadores externos}
+
+Correlacionar el índice compuesto con medidas independientes de satisfacción turística (encuestas de visitantes), impacto ambiental medido in-situ, o evaluaciones del sector privado permitiría validación externa del índice e identificar fuentes de discrepancia potencial en la especificación.
+
+\section{Síntesis final}
+
+Este trabajo ha construido un índice sintético de sostenibilidad turística a nivel regional español siguiendo metodología rigurosa de indicadores compuestos. El resultado es un instrumento cuantitativo que ordena las 19 CCAA en términos de desempeño multidimensional, considerando simultáneamente variables económicas, ambientales y sociales del sector.
+
+La principal aportación es haber hecho explícito y justificado cada paso de la pipeline metodológica: depuración de datos, imputación, tratamiento de outliers, normalización, ponderación y agregación. De igual modo, la comparación de cinco métodos distintos deja constancia de que las decisiones técnicas tienen consecuencias, pero que existe una región «robusta» de regiones (Norte de España) cuyo liderazgo persiste bajo prácticamente cualquier combinación razonable de parámetros.
+
+El índice no resuelve automáticamente la pregunta política de «¿Qué es un turismo verdaderamente sostenible?» —eso requiere debate normativo—, pero proporciona evidencia cuantitativa sobre orientaciones relativas comparables en el tiempo. Es una herramienta de monitoreo y diagnóstico, no de prescripción.
+
+\end{document}
