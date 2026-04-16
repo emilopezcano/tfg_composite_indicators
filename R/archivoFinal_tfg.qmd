@@ -1429,7 +1429,7 @@ Siguiendo el paso de PCA/FA de la OCDE: ponderamos por factores rotados.
 Al rotar los ejescon Varimax (a aquellos factores cuyos autovalores >1), se logra que cada indicador se asocie fuertemente a un solo factor, eliminando el ruido provocado por la redundancia de información (multicolinealidad).
 
 Análisis de pesos y resultados de 2024 (como ejemplo):
--Complejidad Económica: mientras que las dimensiones ambiental y social se resumen en 2 y 4 factores respectivamente, la dimensión económica se desglosa en 7 factores distintos. Esto demuestra que la sostenibilidad económica en España no es un concepto unitario, sino que depende de múltiples nichos (competitividad, gasto, empleo, infraestructura...)
+-Complejidad económica: mientras que las dimensiones ambiental y social se resumen en 2 y 4 factores respectivamente, la dimensión económica se desglosa en 7 factores distintos. Esto demuestra que la sostenibilidad económica en España no es un concepto unitario, sino que depende de múltiples nichos (competitividad, gasto, empleo, infraestructura...)
 
 -Liderazgo de la cornisa cantábrica: bajo este método, Galicia y Asturias ocupan las primeras posiciones. Este resultado es especialmente relevante porque el modelo OCDE penaliza a aquellas regiones que dependen de un solo "super" indicador (como el volumen bruto de turistas) y premia a las que presentan un equilibrio robusto entre los diversos factores ambientales y sociales identificados.
 
