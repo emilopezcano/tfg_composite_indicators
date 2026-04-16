@@ -262,6 +262,34 @@ print(pesos_ocde_L1 |> arrange(Dimension, Factor, desc(Weight_OCDE)), n = 100)
 cat("Suma total de pesos OCDE:", sum(pesos_ocde_L1$Weight_OCDE), "\n")
 ```
 
+Quiero ver los nombres de los indicadores que pertenecen a cada factor: 
+```{r}
+# Creamos la tabla descriptiva de indicadores por factor
+tabla_factores_detalle <- pesos_ocde_L1 |>
+  # 1. Unimos con iMeta para traer el nombre del indicador (iName)
+  left_join(
+    iMeta |> select(iCode, iName), 
+    by = "iCode"
+  ) |>
+  # 2. Seleccionamos y reordenamos las columnas que quieres ver
+  select(Dimension, Factor, iCode, iName, Weight_OCDE) |>
+  # 3. Ordenamos para que la lectura sea lógica
+  arrange(Dimension, Factor, desc(Weight_OCDE))
+
+# Imprimimos la tabla con formato profesional
+tabla_factores_detalle |>
+  knitr::kable(
+    caption = "Composición de Factores (PCA con Rotación Varimax) - OCDE",
+    digits = 4,
+    col.names = c("Dimensión", "Factor", "Código", "Nombre Indicador", "Peso Final"),
+    format = "html"
+  )
+```
+
+
+
+
+
 ## Cálculo del ranking final
 ```{r caso5_ranking_ocde}
 # Identificadores del panel (mismo orden que df_norm_todos)
