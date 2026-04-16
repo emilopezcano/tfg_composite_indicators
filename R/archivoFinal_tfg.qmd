@@ -1107,31 +1107,6 @@ for (a in sort(unique(df_ranking_zscore$Year))) {
 ```
 
 
-```{r comparar_minmax_vs_zscore}
-# Comparamos los rankings de ambos métodos de normalización para un año
-anio_comparar <- 2022
-
-# Por si le damos a run al caso 3 sin haber runneado el caso 1 antes (que lo necesitamos para comparar esos dos casos)
-if (!exists("df_rankings")) stop("Ejecuta primero el Caso 1.")
-
-df_comparacion_norm <- df_rankings |>
-  filter(Time == anio_comparar) |>
-  left_join(
-    df_scores_zscore_amean |> filter(Time == anio_comparar),
-    by = c("uCode", "Time")
-  ) |>
-  mutate(
-    Rank_Minmax = rank(-Score_Amean,       ties.method = "min"),
-    Rank_Zscore = rank(-Score_Zscore_Amean, ties.method = "min"),
-    Diff_Rank   = Rank_Minmax - Rank_Zscore
-  ) |>
-  arrange(Rank_Minmax)
-
-print(df_comparacion_norm)
-```
-Vemos que los valores son exactamente los mismos. 
-
-
 ## CASO 4: MIN MAX + PCA usando TODAS las componentes principales + media geométrica ponderada por varianza  
 Como lo hacen en el artículo que me pasó Emilio. (https://www.tandfonline.com/doi/full/10.1080/13683500.2019.1579174)
 ```{r caso4_pca_completo_geometrica}
