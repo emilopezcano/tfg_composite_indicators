@@ -1,0 +1,302 @@
+---
+title: "Caso 5: PCA/FA manual OCDE — Índice Sintético de Turismo Sostenible"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+editor: source
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Librerías necesarias
+```{r librerias}
+library(COINr)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(lubridate)
+library(ggplot2)
+library(psych)
+library(purrr)
+library(mice)
+```
+
+# Carga y preparación de datos
+```{r carga_datos}
+indicadores_calculados_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/cindicators.rds")
+indicators_meta_final        <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/indicators.rds")
+df_indicadores_completo_final <- readRDS("~/MATEMÁTICAS URJC/CUARTO CURSO/TFG/tfg_composite_indicators/data/df_indicadores_completo.rds")
+
+indicadores_calculados_final <- indicadores_calculados_final |>
+  rename(value = indicator_value) |>
+  select(-source_id) |>
+  mutate(Year = year(as.Date(date)))
+```
+
+# iData
+```{r iData}
+iData <- indicadores_calculados_final |>
+  mutate(Time = year(as.Date(date))) |>
+  select(uCode = geo_id, Time, indicator_id, value) |>
+  pivot_wider(names_from = indicator_id, values_from = value)
+
+iData[do.call(cbind, lapply(iData, is.nan))] <- NA
+```
+
+# Eliminamos indicadores con baja disponibilidad
+```{r eliminar_indicadores}
+# eran los que sólo teníamos de Canarias, pero esto habría que generalizarlo para Evastur, porque quizá de otras regiones si hay datos de estos indicadores ¿?
+indicadores_eliminar <- c("IAMB0004", "IAMB0005", "IAMB0003", "IECO0012", "IECO0013", "ISOC0004")
+
+iData_clean <- iData |>
+  select(-any_of(indicadores_eliminar))
+
+cat("Indicadores restantes:", ncol(iData_clean) - 2, "\n")
+```
+
+# iMeta
+```{r construir_iMeta}
+df <- indicators_meta_final |>
+  select(-any_of("dimension_id")) |>
+  left_join(
+    df_indicadores_completo_final |>
+      select(indicator_id, dimension_id) |>
+      distinct(),
+    by = "indicator_id"
+  )
+
+iMeta_L1 <- df |>
+  select(
+    iCode     = indicator_id,
+    iName     = indicator_original_name,
+    Parent    = dimension_id,
+    Direction = indicator_direction,
+    Weight    = indicator_weight
+  ) |>
+  distinct(iCode, .keep_all = TRUE) |>
+  filter(!iCode %in% indicadores_eliminar) |>
+  mutate(
+    Direction = ifelse(Direction == "+", 1, -1),
+    Level = 1,
+    Type  = "Indicator"
+  )
+
+iMeta_L2 <- iMeta_L1 |>
+  select(iCode = Parent) |>
+  distinct() |>
+  mutate(
+    iName     = paste("Dimensión:", iCode),
+    Level     = 2,
+    Parent    = "TotalIndex",
+    Direction = 1,
+    Weight    = 1,
+    Type      = "Aggregate"
+  )
+
+iMeta_L3 <- data.frame(
+  iCode     = "TotalIndex",
+  iName     = "Índice Sintético Regional",
+  Level     = 3,
+  Parent    = NA,
+  Direction = 1,
+  Weight    = 1,
+  Type      = "Aggregate"
+)
+
+iMeta <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
+```
+
+# Purse inicial
+```{r crear_purse}
+purse <- new_coin(
+  iData    = iData_clean,
+  iMeta    = iMeta,
+  split_to = "all",
+  quietly  = TRUE
+)
+
+purse
+```
+
+# Imputación MICE
+```{r imputacion_mice}
+df_raw     <- get_dset(purse, dset = "Raw")
+df_ids     <- df_raw |> select(uCode, Time)
+df_numeric <- df_raw |> select(-uCode, -Time)
+
+na_pre      <- sum(is.na(df_numeric))
+total_cells <- prod(dim(df_numeric))
+cat("PRE-MICE: ", na_pre, " NAs (", round(100 * na_pre / total_cells, 2), "%)\n")
+
+mice_out   <- mice(df_numeric, m = 1, method = "pmm", maxit = 5, seed = 42, printFlag = FALSE)
+df_imputed <- complete(mice_out)
+
+na_post <- sum(is.na(df_imputed))
+cat("POST-MICE:", na_post, " NAs (", round(100 * na_post / total_cells, 2), "%)\n")
+
+if (na_post > 0) {
+  cols_con_na <- colSums(is.na(df_imputed))
+  print("Indicadores que siguen teniendo NAs:")
+  print(cols_con_na[cols_con_na > 0])
+}
+
+iData_imputed_mice <- bind_cols(df_ids, df_imputed)
+
+purse <- new_coin(
+  iData    = iData_imputed_mice,
+  iMeta    = iMeta,
+  split_to = "all",
+  quietly  = TRUE
+)
+
+for (i in seq_along(purse$coin)) {
+  purse$coin[[i]]$Data$Imputed <- purse$coin[[i]]$Data$Raw
+}
+```
+
+# Tratamiento de outliers (con winsorización)
+```{r winsorizacion}
+purse <- Treat(
+  purse,
+  dset    = "Imputed",
+  f_t     = "winsorise",
+  f_t_para = list(
+    na.rm       = TRUE,
+    winmax      = 5,
+    skew_thresh = 2,
+    kurt_thresh = 3.5,
+    force_win   = TRUE
+  ),
+  disable = FALSE
+)
+```
+
+# Normalización min-max [1, 100]
+```{r normalizar_purse}
+purse <- Normalise(
+  purse,
+  dset         = "Treated",
+  normalise_by = "all",
+  f_n          = "n_minmax",
+  f_n_para     = list(l_u = c(1, 100))
+)
+```
+
+# Preparación del panel normalizado completo
+```{r panel_normalizado}
+# Panel apilado (todas las CCAA x todos los años), sin España
+df_norm_todos <- get_dset(purse, dset = "Normalised") |>
+  filter(uCode != "ESP") |>
+  select(-uCode, -Time) |>
+  select(where(is.numeric)) |>
+  mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x))) #si hay NAs rellenamos con la mediana 
+```
+
+# CASO 5: PCA/FA manual OCDE
+## Cálculo de pesos con rotación Varimax
+```{r caso5_pesos_ocde}
+calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref) {
+
+  # 1. Seleccionamos indicadores de la dimensión
+  inds_dim <- iMeta_ref |> filter(Level == 1, Parent == dim) |> pull(iCode)
+  df_dim   <- df_datos |> select(any_of(inds_dim))
+
+  df_dim <- df_dim |> select(where(\(x) var(x, na.rm = TRUE) > 1e-10))
+
+  # 2. Número de factores a retener (criterio OCDE: eigenvalue > 1)
+  pca_previo <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  n_factores <- sum(pca_previo$sdev^2 > 1)
+
+  # Si solo hay 1 factor no se puede rotar: usamos PCA simple
+  if (n_factores < 2) {
+    loadings_pc1 <- abs(pca_previo$rotation[, 1])
+    pesos        <- loadings_pc1^2 / sum(loadings_pc1^2)
+    return(tibble(iCode = names(pesos), Weight_OCDE = pesos, Factor = "F1", Var_Factor = 1))
+  }
+
+  # 3. Rotación Varimax
+  rotacion <- psych::principal(df_dim, nfactors = n_factores, rotate = "varimax")
+
+  # 4. Asignamos cada indicador al factor de máxima carga
+  loadings_mat  <- as.data.frame(unclass(rotacion$loadings))
+  cargas_maximas <- loadings_mat |>
+    mutate(
+      iCode           = rownames(loadings_mat),
+      Factor_Asignado = colnames(loadings_mat)[apply(loadings_mat, 1, which.max)]
+    )
+
+  # 5. Pesos: cuadrado de la carga / suma de cuadrados del grupo
+  pesos_finales <- cargas_maximas |>
+    pivot_longer(cols = starts_with("RC"), names_to = "Factor", values_to = "Carga") |>
+    filter(Factor == Factor_Asignado) |>
+    group_by(Factor) |>
+    mutate(Weight_in_Factor = Carga^2 / sum(Carga^2)) |>
+    ungroup()
+
+  # Ponderación por varianza explicada relativa del factor
+  var_explicada <- rotacion$Vaccounted["Proportion Var", ]
+  var_relativa  <- var_explicada / sum(var_explicada)
+
+  pesos_finales <- pesos_finales |>
+    mutate(
+      Var_Factor  = as.numeric(var_relativa[Factor]),
+      Weight_OCDE = Weight_in_Factor * Var_Factor
+    )
+
+  return(pesos_finales |> select(iCode, Weight_OCDE, Factor, Var_Factor))
+}
+
+# Aplicamos a las tres dimensiones
+pesos_ocde_L1 <- map_df(c("ECO", "SOC", "ENV"), function(d) {
+  res           <- calcular_pesos_ocde(d, df_norm_todos, iMeta)
+  res$Dimension <- d
+  res
+})
+
+print(pesos_ocde_L1 |> arrange(Dimension, Factor, desc(Weight_OCDE)), n = 100)
+
+# Verificación: la suma debería ser 1 por dimensión (luego hay que dividir el resultado final entre 3, como si dieramos a cada dimensión un peso de 1/3)
+cat("Suma total de pesos OCDE:", sum(pesos_ocde_L1$Weight_OCDE), "\n")
+```
+
+## Cálculo del ranking final
+```{r caso5_ranking_ocde}
+# Identificadores del panel (mismo orden que df_norm_todos)
+df_ids_panel <- get_dset(purse, dset = "Normalised") |>
+  filter(uCode != "ESP") |>
+  select(uCode, Time)
+
+# Vector de pesos con nombres de indicadores
+pesos_finales_vector          <- pesos_ocde_L1$Weight_OCDE
+names(pesos_finales_vector)   <- pesos_ocde_L1$iCode
+
+# Matriz de datos en el orden correcto
+matriz_datos <- df_norm_todos |>
+  select(any_of(names(pesos_finales_vector))) |>
+  as.matrix()
+matriz_datos <- matriz_datos[, names(pesos_finales_vector)]
+
+# Score = producto matricial
+df_STI_OCDE <- df_ids_panel |>
+  mutate(Score_OCDE = as.vector(matriz_datos %*% pesos_finales_vector)/3) |>
+  group_by(Time) |>
+  mutate(Posicion = row_number(desc(Score_OCDE))) |>
+  ungroup() |>
+  arrange(Time, Posicion)
+
+# Resultados
+cat("\n=== RANKING COMPLETO POR AÑO — CASO 5 (PCA/FA OCDE) ===\n")
+for (a in sort(unique(df_STI_OCDE$Time))) {
+  cat("\n### AÑO", a, "###\n")
+  df_STI_OCDE |>
+    filter(Time == a) |>
+    select(uCode, Score_OCDE, Posicion) |>
+    mutate(Score_OCDE = round(Score_OCDE, 3)) |>
+    as_tibble() |>
+    print(n = 19)
+}
+```
+
