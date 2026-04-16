@@ -22,6 +22,7 @@ library(ggplot2)
 library(psych)
 library(purrr)
 library(mice)
+library(knitr)
 ```
 
 # Carga y preparación de datos
@@ -287,44 +288,48 @@ tabla_factores_detalle |>
 ```
 
 
-
-
-
-## Cálculo del ranking final
+Calculamos el ranking final con el método de la OCDE PCA/FA: 
 ```{r caso5_ranking_ocde}
-# Identificadores del panel (mismo orden que df_norm_todos)
+# 1. Usamos los identificadores ya filtrados
 df_ids_panel <- get_dset(purse, dset = "Normalised") |>
   filter(uCode != "ESP") |>
   select(uCode, Time)
 
-# Vector de pesos con nombres de indicadores
-pesos_finales_vector          <- pesos_ocde_L1$Weight_OCDE
-names(pesos_finales_vector)   <- pesos_ocde_L1$iCode
+# 2. Preparamos pesos
+pesos_finales_vector <- pesos_ocde_L1$Weight_OCDE
+names(pesos_finales_vector) <- pesos_ocde_L1$iCode
 
-# Matriz de datos en el orden correcto
-matriz_datos <- df_norm_todos |>
-  select(any_of(names(pesos_finales_vector))) |>
+# 3. Preparamos matriz de datos numéricos
+matriz_datos <- df_norm_todos |> 
+  select(any_of(names(pesos_finales_vector))) |> 
   as.matrix()
+
+# Verificamos que las columnas están en el orden correcto para el producto matricial
 matriz_datos <- matriz_datos[, names(pesos_finales_vector)]
 
-# Score = producto matricial
+# 4. Cálculo del Score y ranking
 df_STI_OCDE <- df_ids_panel |>
-  mutate(Score_OCDE = as.vector(matriz_datos %*% pesos_finales_vector)/3) |>
+  mutate(Score_OCDE = as.vector(matriz_datos %*% pesos_finales_vector) / 3) |>
   group_by(Time) |>
   mutate(Posicion = row_number(desc(Score_OCDE))) |>
   ungroup() |>
-  arrange(Time, Posicion)
+  rename(CCAA = uCode, Año = Time)
 
-# Resultados
-cat("\n=== RANKING COMPLETO POR AÑO — CASO 5 (PCA/FA OCDE) ===\n")
-for (a in sort(unique(df_STI_OCDE$Time))) {
-  cat("\n### AÑO", a, "###\n")
+# 5. Mostrar resultados
+for (a in sort(unique(df_STI_OCDE$Año))) {
+  cat("\n\n### Año", a, "\n")
+  
   df_STI_OCDE |>
-    filter(Time == a) |>
-    select(uCode, Score_OCDE, Posicion) |>
-    mutate(Score_OCDE = round(Score_OCDE, 3)) |>
-    as_tibble() |>
-    print(n = 19)
+    filter(Año == a) |>
+    select(Posicion, CCAA, Score_OCDE) |>
+    arrange(Posicion) |>
+    knitr::kable(
+      caption = paste("Caso 5: Método OCDE (Factor Analysis) - Año", a),
+      digits = 3,
+      col.names = c("Posición", "CCAA", "Score OCDE"),
+      format = "html"
+    ) |>
+    print()
 }
 ```
 
