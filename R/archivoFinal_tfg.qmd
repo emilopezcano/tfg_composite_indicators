@@ -827,39 +827,33 @@ purse_PCA_amean <- Aggregate(
   f_ag = "a_amean"
 )
 
-df_scores_amean <- get_dset(purse_PCA_amean, dset = "Aggregated") |>
-  select(uCode, Time, TotalIndex) |>
-  filter(uCode != "ESP") |>
-  arrange(Time, desc(TotalIndex)) |>
-  rename(Score_Amean = TotalIndex)
-
-print(df_scores_amean)
-```
-
-Ranking usando media aritmetica
-```{r ranking_pca_media_aritmetica}
-# 1. Extraemos y calculamos los rankings
 df_rankings <- get_dset(purse_PCA_amean, dset = "Aggregated") |>
-  # Seleccionamos columnas clave (uCode suele ser el geo_id de la CCAA)
   select(uCode, Time, TotalIndex) |>
-  # Quitamos el total nacional para que no altere el ranking
   filter(uCode != "ESP") |>
-  # Agrupamos por año para que el ranking se reinicie cada vez
-  group_by(Time) |>
-  # Ordenamos por puntuación descendente
-  arrange(Time, desc(TotalIndex)) |>
-  # Creamos la columna de posición (1, 2, 3...)
-  mutate(Rank = row_number()) |>
-  # Renombramos para que quede profesional
   rename(CCAA = uCode, Year = Time, Score = TotalIndex) |>
+  # Calculamos el ranking anual
+  group_by(Year) |>
+  mutate(Rank = row_number(desc(Score))) |>
   ungroup()
 
-# 2. Ver el resultado (puedes filtrar por un año específico para chequear)
-print(df_rankings)
-
-# Opcional: Ver solo el Top 3 de cada año
-df_rankings |> filter(Rank <= 3)
+# Imprimimos ranking y scores por año
+for (a in sort(unique(df_rankings$Year))) {
+  cat("\n\n### Año", a, "\n")
+  
+  df_rankings |>
+    filter(Year == a) |>
+    select(Rank, CCAA, Score) |>
+    arrange(Rank) |>
+    knitr::kable(
+      caption = paste("Caso 1: Media Aritmética Simple - Año", a),
+      digits = 2,
+      col.names = c("Posición", "CCAA", "Puntuación (Score)"),
+      format = "html"
+    ) |>
+    print()
+}
 ```
+
 
 ## CASO 2: MIN MAX + PCA + MEDIA GEOMÉTRICA
 (Ayuda Perplexity porque usando el paquete COINr con Aggregate () y f_ag="a_gmean" me daba errores. Así que al final la hago manualmente)
@@ -901,18 +895,29 @@ scores_mg_ponderada <- apply(
 # Paso 5: Resultados y ranking
 df_ranking_ponderado <- df_norm |>
   select(uCode, Time) |>
-  mutate(ScoreGeometrico = scores_mg_ponderada) |>
+  mutate(Score = scores_mg_ponderada) |>
   group_by(Time) |>
-  arrange(Time, desc(ScoreGeometrico)) |>
-  mutate(
-    Posicion = row_number(),
-    Pct_Inferior = round(Posicion / n() * 100, 1)
-  ) |>
-  rename(CCAA = uCode, Año = Time, Score = ScoreGeometrico) |>
-  select(CCAA, Año, Score, Posicion, Pct_Inferior) |>
+  arrange(Time, desc(Score)) |>
+  mutate(Posicion = row_number()) |>
+  rename(CCAA = uCode, Año = Time) |>
   ungroup()
 
-print(df_ranking_ponderado, n=171)
+# Imprimo por año
+for (a in sort(unique(df_ranking_ponderado$Año))) {
+  cat("\n\n### Año", a, "\n")
+  
+  df_ranking_ponderado |>
+    filter(Año == a) |>
+    select(Posicion, CCAA, Score) |>
+    arrange(Posicion) |>
+    knitr::kable(
+      caption = paste("Caso 2: Media Geométrica Ponderada - Año", a),
+      digits = 2,
+      col.names = c("Posición", "CCAA", "Score (MG)"),
+      format = "html"
+    ) |>
+    print()
+}
 ```
 
 A continuación algunos ejemplos de gráficos que pueden servirnos para meter en el TFG: 
@@ -921,7 +926,6 @@ A continuación algunos ejemplos de gráficos que pueden servirnos para meter en
 # Creamos df_final_mg a partir del resultado del cálculo anterior
 df_final_mg <- df_ranking_ponderado |>
   rename(uCode = CCAA, Time = Año, TotalIndex = Score)
-
 
 # Usamos df_final_mg 
 df_graficos <- df_final_mg |>
@@ -1076,27 +1080,32 @@ purse_zscore_amean <- Aggregate(
   f_ag = "a_amean"
 )
 
-df_scores_zscore_amean <- get_dset(purse_zscore_amean, dset = "Aggregated") |>
+df_ranking_zscore <- get_dset(purse_zscore_amean, dset = "Aggregated") |>
   select(uCode, Time, TotalIndex) |>
   filter(uCode != "ESP") |>
-  arrange(Time, desc(TotalIndex)) |>
-  rename(Score_Zscore_Amean = TotalIndex)
-
-print(df_scores_zscore_amean)
-```
-
-```{r ranking_zscore_amean}
-df_ranking_zscore <- df_scores_zscore_amean |>
-  group_by(Time) |>
-  arrange(Time, desc(Score_Zscore_Amean)) |>
-  mutate(Rank = row_number()) |>
-  rename(CCAA = uCode, Year = Time, Score = Score_Zscore_Amean) |>
+  rename(CCAA = uCode, Year = Time, Score = TotalIndex) |>
+  group_by(Year) |>
+  # En Z-score, el 0 es la media. Valores altos son mejores.
+  mutate(Rank = row_number(desc(Score))) |>
   ungroup()
 
-print(df_ranking_zscore)
-
-df_ranking_zscore |> filter(Rank <= 3)
+for (a in sort(unique(df_ranking_zscore$Year))) {
+  cat("\n\n### Año", a, "\n")
+  
+  df_ranking_zscore |>
+    filter(Year == a) |>
+    select(Rank, CCAA, Score) |>
+    arrange(Rank) |>
+    knitr::kable(
+      caption = paste("Caso 3: Media Aritmética (Z-Score) - Año", a),
+      digits = 3, # Damos un decimal más porque los Z-scores suelen ser valores pequeños
+      col.names = c("Posición", "CCAA", "Score (Z-Score)"),
+      format = "html"
+    ) |>
+    print()
+}
 ```
+
 
 ```{r comparar_minmax_vs_zscore}
 # Comparamos los rankings de ambos métodos de normalización para un año
@@ -1120,31 +1129,8 @@ df_comparacion_norm <- df_scores_amean |>
 
 print(df_comparacion_norm)
 ```
+Vemos que los valores son exactamente los mismos. 
 
-```{r plot_comparacion_normalizacion}
-df_comparacion_norm |>
-  pivot_longer(
-    cols      = c(Score_Amean, Score_Zscore_Amean),
-    names_to  = "Metodo",
-    values_to = "Score"
-  ) |>
-  mutate(Metodo = recode(Metodo,
-    "Score_Amean"        = "Min-Max + Aritmética",
-    "Score_Zscore_Amean" = "Z-Score + Aritmética"
-  )) |>
-  ggplot(aes(x = reorder(uCode, Score), y = Score, fill = Metodo)) +
-  geom_col(position = "dodge") +
-  coord_flip() +
-  scale_fill_manual(values = c("#4C72B0", "#55A868")) +
-  labs(
-    title    = paste0("Min-Max vs Z-Score — Media Aritmética (", anio_comparar, ")"),
-    subtitle = "Ponderación PCA (Imputación MICE)",
-    x        = NULL,
-    y        = "Score"
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(legend.position = "top")
-```
 
 ## CASO 4: MIN MAX + PCA usando TODAS las componentes principales + media geométrica ponderada por varianza  
 Como lo hacen en el artículo que me pasó Emilio. (https://www.tandfonline.com/doi/full/10.1080/13683500.2019.1579174)
@@ -1263,21 +1249,29 @@ df_STI <- df_indices_dim |>
   group_by(Time) |>
   arrange(Time, desc(STI)) |>
   mutate(Rank = row_number()) |>
-  ungroup()
+  ungroup() |>
+  rename(CCAA = uCode, Year = Time)
+
+cat("Parámetros de ponderación dimensional (Varianza explicada PC1):\n")
+cat("α (ECO):", round(alpha, 4), "| β (SOC):", round(beta, 4), "| δ (ENV):", round(delta, 4), "\n")
 
 # 5. Resultados
-cat("\n=== TOP 3 POR AÑO — STI (PCA Completo + Media Geométrica) ===\n")
-df_STI |>
-  filter(Rank <= 3) |>
-  select(Time, uCode, STI, Rank) |>
-  print(n = 30)
-
-cat("\n=== RANKING COMPLETO 2024 ===\n")
-df_STI |>
-  filter(Time == 2024) |>
-  select(uCode, ECO, SOC, ENV, STI, Rank) |>
-  mutate(across(where(is.numeric), \(x) round(x, 3))) |>
-  print(n = 19)
+for (a in sort(unique(df_STI$Year))) {
+  cat("\n\n### Año", a, "\n")
+  
+  df_STI |>
+    filter(Year == a) |>
+    # Seleccionamos el Rank, la CCAA, los índices parciales y el STI final
+    select(Rank, CCAA, ECO, SOC, ENV, STI) |>
+    arrange(Rank) |>
+    knitr::kable(
+      caption = paste("Caso 4: Índice STI (PCA Geométrico) - Año", a),
+      digits = 3,
+      col.names = c("Posición", "CCAA", "I. Económico", "I. Social", "I. Ambiental", "STI Final"),
+      format = "html"
+    ) |>
+    print()
+}
 ```
 Diferencia con PCA simple (quedándonos solo con PC1): este procedimiento no descarta información, sino que utiliza todas las componentes principales de cada dimensión para construir los índices parciales (ECO, SOC y ENV), ponderando cada score por su varianza explicada. 
 Luego, para la agregación finalç, se utiliza una media geométrica ponderada cuyos exponentes (α, β y δ) corresponden a la proporción de varianza explicada por la primera componente principal (PC1) de cada dimensión respectiva.
@@ -1363,6 +1357,30 @@ pesos_ocde_L1 |> group_by(Dimension) |>
   summarise(suma = sum(Weight_OCDE))
 ```
 
+Quiero ver los nombres de los indicadores que pertenecen a cada factor: 
+```{r}
+# Creamos la tabla descriptiva de indicadores por factor
+tabla_factores_detalle <- pesos_ocde_L1 |>
+  # Unimos con iMeta para traer el nombre del indicador (iName)
+  left_join(
+    iMeta |> select(iCode, iName), 
+    by = "iCode"
+  ) |>
+  # Seleccionamos y reordenamos las columnas
+  select(Dimension, Factor, iCode, iName, Weight_OCDE) |>
+  # Ordenamos
+  arrange(Dimension, Factor, desc(Weight_OCDE))
+
+# Imprimimos la tabla
+tabla_factores_detalle |>
+  knitr::kable(
+    caption = "Composición de Factores (PCA con Rotación Varimax) - OCDE",
+    digits = 4,
+    col.names = c("Dimensión", "Factor", "Código", "Nombre Indicador", "Peso Final"),
+    format = "html"
+  )
+```
+
 Calculamos el ranking final con el método de la OCDE PCA/FA: 
 ```{r caso5_ranking_ocde}
 # 1. Usamos los identificadores ya filtrados
@@ -1382,20 +1400,30 @@ matriz_datos <- df_norm_todos |>
 # Verificamos que las columnas están en el orden correcto para el producto matricial
 matriz_datos <- matriz_datos[, names(pesos_finales_vector)]
 
-# 4. Cálculo del Score (sin normalizar) y unión con IDs
+# 4. Cálculo del Score y ranking
 df_STI_OCDE <- df_ids_panel |>
-  mutate(Score_OCDE = as.vector(matriz_datos %*% pesos_finales_vector)/3) |>
+  mutate(Score_OCDE = as.vector(matriz_datos %*% pesos_finales_vector) / 3) |>
   group_by(Time) |>
   mutate(Posicion = row_number(desc(Score_OCDE))) |>
   ungroup() |>
-  arrange(Time, Posicion)
+  rename(CCAA = uCode, Año = Time)
 
 # 5. Mostrar resultados
-cat("\n=== RANKING OCDE (CASO 5) - AÑO 2024 ===\n")
-df_STI_OCDE |> 
-  filter(Time == 2024) |>
-  select(uCode, Score_OCDE, Posicion) |>
-  print(n = 19)
+for (a in sort(unique(df_STI_OCDE$Año))) {
+  cat("\n\n### Año", a, "\n")
+  
+  df_STI_OCDE |>
+    filter(Año == a) |>
+    select(Posicion, CCAA, Score_OCDE) |>
+    arrange(Posicion) |>
+    knitr::kable(
+      caption = paste("Caso 5: Método OCDE (Factor Analysis) - Año", a),
+      digits = 3,
+      col.names = c("Posición", "CCAA", "Score OCDE"),
+      format = "html"
+    ) |>
+    print()
+}
 ```
 Siguiendo el paso de PCA/FA de la OCDE: ponderamos por factores rotados.
 Al rotar los ejescon Varimax (a aquellos factores cuyos autovalores >1), se logra que cada indicador se asocie fuertemente a un solo factor, eliminando el ruido provocado por la redundancia de información (multicolinealidad).
@@ -1415,34 +1443,48 @@ Ejemplo de resultados para 2024
 # Unificamos todos los rankings en un solo dataframe
 # Extraemos solo uCode, Time y la Posición de cada caso
 
-comp_caso1 <- df_rankings |> select(uCode = CCAA, Time = Year, Caso1 = Rank)
-comp_caso2 <- df_ranking_ponderado |> select(uCode = CCAA, Time = Año, Caso2 = Posicion)
-comp_caso3 <- df_ranking_zscore |> select(uCode = CCAA, Time = Year, Caso3 = Rank)
-comp_caso4 <- df_STI |> select(uCode, Time, Caso4 = Rank)
-comp_caso5 <- df_STI_OCDE |> select(uCode, Time, Caso5 = Posicion)
+comp_caso1 <- df_rankings |> 
+  select(uCode = CCAA, Time = Year, Caso1 = Rank)
 
+comp_caso2 <- df_ranking_ponderado |> 
+  select(uCode = CCAA, Time = Año, Caso2 = Posicion)
+
+comp_caso3 <- df_ranking_zscore |> 
+  select(uCode = CCAA, Time = Year, Caso3 = Rank)
+
+comp_caso4 <- df_STI |> 
+  select(uCode, Time, Caso4 = Rank)
+
+comp_caso5 <- df_STI_OCDE |> 
+  select(uCode = CCAA, Time = Año, Caso5 = Posicion)
+
+# 2. Unión de todos los casos
 df_comparativa_total <- comp_caso1 |>
   left_join(comp_caso2, by = c("uCode", "Time")) |>
   left_join(comp_caso3, by = c("uCode", "Time")) |>
   left_join(comp_caso4, by = c("uCode", "Time")) |>
   left_join(comp_caso5, by = c("uCode", "Time"))
 
-# Función para imprimir la tabla de un año específico (ej. 2024)
+# 3. Función para imprimir la tabla con formato KABLE (profesional)
 ver_comparativa_anio <- function(anio) {
-  cat("\n", paste0("=== COMPARATIVA DE RANKINGS: AÑO ", anio, " ==="), "\n")
+  cat("\n\n### Comparativa de Rankings: Año", anio, "\n")
   
-  tabla <- df_comparativa_total |>
+  df_comparativa_total |>
     filter(Time == anio) |>
-    # Calculamos la desviación estándar de las posiciones para ver qué CCAA es más "volátil"
     rowwise() |>
-    mutate(Desviacion = round(sd(c_across(starts_with("Caso")), na.rm=TRUE), 1)) |>
-    arrange(Caso5) # Ordenamos por el método OCDE por ejemplo
-  
-  return(tabla)
+    # Calculamos la desviación estándar (volatilidad)
+    mutate(Desviacion = round(sd(c_across(starts_with("Caso")), na.rm = TRUE), 1)) |>
+    ungroup() |>
+    arrange(Caso5) |>
+    knitr::kable(
+      caption = paste("Comparativa de Posiciones según Metodología -", anio),
+      col.names = c("CCAA", "Año", "Aritmética", "Geométrica P.", "Z-Score", "STI (PCA)", "OCDE (FA)", "Volatilidad"),
+      format = "html"
+    )
 }
 
-tabla_2024 <- ver_comparativa_anio(2024)
-print(tabla_2024, n = 19)
+# 4. Ver el resultado de 2024
+ver_comparativa_anio(2024)
 ```
 
 Gráfica ejemplo 2024
@@ -1466,8 +1508,8 @@ df_comparativa_total |>
 comp_caso1 <- df_rankings |> select(uCode = CCAA, Time = Year, Caso1 = Rank)
 comp_caso2 <- df_ranking_ponderado |> select(uCode = CCAA, Time = Año, Caso2 = Posicion)
 comp_caso3 <- df_ranking_zscore |> select(uCode = CCAA, Time = Year, Caso3 = Rank)
-comp_caso4 <- df_STI |> select(uCode, Time, Caso4 = Rank)
-comp_caso5 <- df_STI_OCDE |> select(uCode, Time, Caso5 = Posicion)
+comp_caso4 <- df_STI |> select(uCode = CCAA, Time = Year, Caso4 = Rank)
+comp_caso5 <- df_STI_OCDE |> select(uCode = CCAA, Time = Año, Caso5 = Posicion)
 # 2. Unión de los 5 casos
 df_maestro_rankings <- comp_caso1 |>
 left_join(comp_caso2, by = c("uCode", "Time")) |>
@@ -1513,10 +1555,10 @@ scores_caso3 <- df_scores_zscore_amean |>
   select(uCode, Time, Caso3 = Score_Zscore_Amean)
 
 scores_caso4 <- df_STI |>
-  select(uCode, Time, Caso4 = STI)
+  select(uCode = CCAA, Time = Year, Caso4 = STI)
 
 scores_caso5 <- df_STI_OCDE |>
-  select(uCode, Time, Caso5 = Score_OCDE)
+  select(uCode = CCAA, Time = Año, Caso5 = Score_OCDE)
 
 df_scores_raw <- scores_caso1 |>
   left_join(scores_caso2, by = c("uCode", "Time")) |>
