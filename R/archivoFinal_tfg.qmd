@@ -1440,7 +1440,7 @@ df_comparativa_total <- comp_caso1 |>
   left_join(comp_caso4, by = c("uCode", "Time")) |>
   left_join(comp_caso5, by = c("uCode", "Time"))
 
-# 3. Función para imprimir la tabla con formato KABLE (profesional)
+# 3. Imprimimos tabla
 ver_comparativa_anio <- function(anio) {
   cat("\n\n### Comparativa de Rankings: Año", anio, "\n")
   
@@ -1519,14 +1519,14 @@ La columna SD_Metodos mide la volatilidad: un valor bajo indica que la región e
 ```{r scores_raw_por_caso}
 
 # Extraemos scores de cada caso
-scores_caso1 <- df_ranking |>
-  select(uCode, Time, Caso1 = Score_Amean)
+scores_caso1 <- df_rankings |>
+  select(uCode= CCAA, Time = Year, Caso1 = Score)
 
 scores_caso2 <- df_ranking_ponderado |>
   select(uCode = CCAA, Time = Año, Caso2 = Score)
 
-scores_caso3 <- df_scores_zscore_amean |>
-  select(uCode, Time, Caso3 = Score_Zscore_Amean)
+scores_caso3 <- df_ranking_zscore |>
+  select(uCode = CCAA, Time = Year, Caso3 = Score)
 
 scores_caso4 <- df_STI |>
   select(uCode = CCAA, Time = Year, Caso4 = STI)
