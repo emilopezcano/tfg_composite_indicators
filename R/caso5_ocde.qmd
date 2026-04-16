@@ -253,8 +253,8 @@ calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref) {
 # Aplicamos a las tres dimensiones
 pesos_ocde_L1 <- map_df(c("ECO", "SOC", "ENV"), function(d) {
   res           <- calcular_pesos_ocde(d, df_norm_todos, iMeta)
-  res$Dimension <- d
-  res
+  res$Dimension <- d 
+  res 
 })
 
 print(pesos_ocde_L1 |> arrange(Dimension, Factor, desc(Weight_OCDE)), n = 100)
