@@ -11,6 +11,12 @@ execute:
   message: false
 ---
 
+# Propósito
+Construir índice compuesto para medir la sostenibilidad del turismo. 
+Trabajamos con la base de datos de la empresa Dephimática. Para su proyecto Evastur. 
+Queremos resumir la información en una sola cifra para poder comparar regiones por año. 
+En nuestro caso: nos centramos en la geografía = CCAA en España (+ Ceuta y Melilla). 
+
 Cargamos las librerías necesarias.
 ```{r librerias, message=FALSE, warning=FALSE}
 library(COINr)
@@ -157,14 +163,7 @@ eliminados <- disponibilidad |> filter(disponibilidad_Pct<20) |> pull(iCode)
 print(paste("Indicadores eliminados por baja disponibilidad:", length(eliminados)))
 print(eliminados)
 ```
- Con el filtro de eliminar los pct<20
- [1] "Indicadores eliminados por baja disponibilidad incluyendo el año 2020 : 10"
- [1] "IAMB0004" "IECO0012" "IECO0013" "ISOC0004" "IAMB0005" "IAMB0003" "IAMB0002"
- [8] "IAMB0006" "IAMB0007" "IAMB0001"
- 
-  [1] "Indicadores eliminados por baja disponibilidad excluyendo el año 2020 : 9. salvo a IAMB0002"
- [1] "IAMB0004" "IAMB0005" "IAMB0003" "IECO0012" "IECO0013" "ISOC0004" "IAMB0006"
-[8] "IAMB0007" "IAMB0001"
+
 
 # Eliminamos indicadores con baja disponibilidad
 Eliminamos ahora los indicadores con baja disponibilidad
@@ -193,7 +192,7 @@ df <- indicators_meta_final |>
     by = "indicator_id"
   )
 
-# --- NIVEL 1: INDICADORES ---
+#  NIVEL 1: INDICADORES 
 iMeta_L1 <- df |>
   select(
     iCode     = indicator_id,
@@ -211,7 +210,7 @@ iMeta_L1 <- df |>
     Type  = "Indicator"
   )
 
-# --- NIVEL 2: DIMENSIONES ---
+#  NIVEL 2: DIMENSIONES 
 iMeta_L2 <- iMeta_L1 |>
   select(iCode = Parent) |>
   distinct() |>
@@ -224,7 +223,7 @@ iMeta_L2 <- iMeta_L1 |>
     Type      = "Aggregate"
   )
 
-# --- NIVEL 3: ÍNDICE FINAL ---
+#  NIVEL 3: ÍNDICE FINAL 
 iMeta_L3 <- data.frame(
   iCode     = "TotalIndex",
   iName     = "Índice Sintético Regional",
@@ -235,7 +234,7 @@ iMeta_L3 <- data.frame(
   Type      = "Aggregate"
 )
 
-# --- UNIÓN FINAL ---
+#  UNIÓN FINAL 
 iMeta <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
 
 glimpse(iMeta)
@@ -262,7 +261,7 @@ Cómo funciona MICE:
 La imputación múltiple es un método que aborda el problema de los valores faltantes en los conjuntos de datos al generar múltiples conjuntos de datos completos, cada uno con valores imputados de manera diferente. Luego, los resultados se combinan para obtener estimaciones finales y varianzas que reflejen la incertidumbre de la imputación."
 
 ```{r imputacion_mice}
-# 1. Preparar datos numéricos
+# 1. Preparamos datos numéricos
 df_raw <- get_dset(purse, dset = "Raw") #Extraemos los datos originales (Raw)
 df_ids <- df_raw |> select(uCode, Time) #Guardamos aparte las oclumnas de identificación (región y año)
 df_numeric <- df_raw |> select(-uCode, -Time) #Nos quedamos solo con las columnas de los indicadores. Y estas son las que MICE va a analizar para encontrar patrones.
@@ -307,20 +306,20 @@ for(i in seq_along(purse$coin)){
 
 Ejemplo gráfico distribución indicador IECO0033 por año.
 ```{r grafico_densidad_ieco0033}
-# 1. Sacamos los datos limpios de todo el panel
+# Sacamos los datos limpios de todo el panel
 df_imputed <- get_dset(purse, dset = "Imputed")
 
-# 2. Elegimos el indicador que queremos "investigar" (ej. IECO0033)
+# Elegimos el indicador que queremos "investigar" (ej. IECO0033)
 df_imputed |>
   select(uCode, Time, IECO0033) |>
-  # 3. Hacemos un diagrama de densidad (como un histograma suavizado) para ver la "cola"
+  # Hacemos un diagrama de densidad (como un histograma suavizado) para ver la "cola"
   ggplot(aes(x = IECO0033, fill = as.factor(Time))) +
   geom_density(alpha = 0.4) + # Alpha le da transparencia para ver los años superpuestos
   theme_minimal() +
   labs(
     title = "Distribución del indicador IECO0033 (Todos los años)",
     subtitle = "Viendo la asimetría y los valores extremos",
-    x = "Valor del Indicador",
+    x = "Valor del indicador",
     y = "Densidad",
     fill = "Año"
   )
@@ -335,7 +334,7 @@ Treat trata cada año del purse de forma independiente: entra en 1 año, mira la
 Riesgo de este método: perdemos la perspectiva histórica. Un outlier en 2016 puede ser un valor normal en 2024 p ej.
 
 ```{r tratamiento_y_verificacion_outliers}
-# 1. Aplicamos la winsorización al purse
+# Aplicamos la winsorización al purse
 purse <- Treat(
   purse,
   dset = "Imputed",
@@ -348,7 +347,7 @@ purse <- Treat(
   disable = FALSE
 )
 
-# 2. Creamos la tabla de comparación 'Antes vs Después' de forma directa
+# Creamos la tabla de comparación antes vs después
 df_antes   <- get_dset(purse, "Imputed")
 df_despues <- get_dset(purse, "Treated")
 
@@ -361,7 +360,7 @@ comparacion <- df_antes |>
   ) |>
   filter(antes != despues) # Solo nos quedamos con los que ha cambiado R realmente
 
-# 3. Mostramos los resultados
+# Mostramos los resultados
 message("Se han modificado ", nrow(comparacion), " valores atípicos.")
 
 # Tabla de valores específicos cambiados
@@ -419,8 +418,7 @@ Validez del enfoque multidimensional: la heterogeneidad de colores en el gráfic
 ## PCA y clustering para todo el panel
 Análisis exploratorio. Hacemos PCA sobre el panel completo apilado (todas las CCAA x tods los años) para entender la estructura de los datos y ver cuánta varianza explica la PC1. También hacemos clustering jerárquico (dendrograma) para ver cómo se agrupan los indicadores. (Aquí todavía no guardamos los pesos en los metadatos del índice, sólo es exploratorio).
 ```{r pca_clustering_panel}
-## PCA — PANEL COMPLETO CON DIAGNÓSTICO DE ELIMINACIÓN
-# 1. Extraemos datos iniciales. Quito España para estuidar solo las CCAA
+# Extraemos datos iniciales. Quito España para estuidar solo las CCAA
 df_norm_panel <- get_dset(purse, dset = "Normalised") |>
   filter(uCode != "ESP") 
 
@@ -430,45 +428,45 @@ nombres_iniciales <- names(df_norm_panel |> select(where(is.numeric)) |> select(
 # Identificamos indicadores TODO NA
 indicadores_todo_na <- nombres_iniciales[sapply(df_norm_panel[nombres_iniciales], function(x) all(is.na(x)))]
 
-# Identificamos indicadores CONSTANTES (Sin varianza)
+# Identificamos indicadores CONSTANTES (varianza 0)
 # Primero imputamos temporalmente por la mediana (donde el MICE no pudo imputar) para poder calcular la varianza sin que los NAs molesten
 df_temp <- df_norm_panel |>
   mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
 indicadores_constantes <- nombres_iniciales[sapply(df_temp[nombres_iniciales], function(x) var(x, na.rm = TRUE) <= 1e-10)]
 
-# INFORME DE ELIMINACIÓN
+# Vemos resultados de esto:
 cat("Indicadores iniciales: ", length(nombres_iniciales), "\n")
 
 if(length(indicadores_todo_na) > 0) {
-  cat("\n ELIMINADOS POR SER TODO NA:\n", paste(indicadores_todo_na, collapse = ", "), "\n")
+  cat("\n Indicadores eliminados por tener todo NAs:\n", paste(indicadores_todo_na, collapse = ", "), "\n")
 } else {
-  cat("\n Ningún indicador es totalmente NA.\n")
+  cat("\n Ningún indicador tiene todo NAs.\n")
 }
 
 if(length(indicadores_constantes) > 0) {
-  cat("\n ELIMINADOS POR VARIANZA CERO (Constantes):\n", paste(indicadores_constantes, collapse = ", "), "\n")
+  cat("\n Indicadores eliminados por ser constantes:\n", paste(indicadores_constantes, collapse = ", "), "\n")
 } else {
   cat("\n Ningún indicador es constante.\n")
 }
 
-# 2. Preparación final de la matriz (ya sabiendo qué quitamos)
+# Preparamos df final para PCA
 df_pca_panel <- df_norm_panel |>
   select(all_of(nombres_iniciales)) |>
   select(-any_of(c(indicadores_todo_na, indicadores_constantes))) |>
-  # Imputación de rescate para los 136 NAs residuales de MICE
+  # Imputación por mediana para los NAs que no ha imputado MICE
   mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
 
 cat("\n Indicadores finales para PCA: ", ncol(df_pca_panel), "\n")
 cat("════════════════════════════════\n")
 
-# 3. Ejecución del PCA
+# Ejecución del PCA
 pca_result_panel <- prcomp(df_pca_panel, center = TRUE, scale. = TRUE)
 print(pca_result_panel)
 summary(pca_result_panel)
 
 # Biplot
 biplot(pca_result_panel, scale = 0, cex = 0.5,
-       main = "PCA — Estructura del Panel Completo (2016-2024)")
+       main = "PCA - Estructura del panel completo (2016-2024)")
 
 varianza_explicada <- summary(pca_result_panel)$importance[2, ]
 
@@ -482,22 +480,22 @@ tibble(
   geom_col(fill = "#4C72B0") +
   geom_line(aes(group = 1), color = "red", linewidth = 0.8) +
   geom_point(color = "red", size = 2) +
-  labs(title = "Scree plot — Varianza explicada (Panel Completo)",
+  labs(title = "Scree plot - Varianza explicada (Panel Completo)",
        x = "Componente principal", y = "Varianza explicada (%)") +
   theme_minimal()
 
-# 1. Trasponemos: Filas = Indicadores | Columnas = Observaciones (CCAA-Año)
+# Trasponemos: Filas = Indicadores | Columnas = Observaciones (CCAA-Año)
 df_pca_t_panel <- t(df_pca_panel)
 
-# 2. Calculamos distancias euclídeas
+# Calculamos distancias euclídeas
 dist_matrix_panel <- dist(df_pca_t_panel, method = "euclidean")
 
-# 3. Clustering (Método Ward)
+# Clustering
 hclust_panel <- hclust(dist_matrix_panel, method = "ward.D2")
 
-# 4. Dendrograma
+# Dendrograma
 plot(hclust_panel,
-     main = "Dendrograma de Indicadores (2016-2024)",
+     main = "Dendrograma de indicadores (2016-2024)",
      xlab = "Indicador", ylab = "Distancia (Similitud de perfil)",
      cex  = 0.7)
 
@@ -573,7 +571,7 @@ ggcorrplot(cor_panel,
            type       = "lower",
            tl.cex     = 5,
            colors     = c("#d73027", "white", "#4575b4"),
-           title      = "Correlaciones — Panel Completo (2016-2024)",
+           title      = "Correlaciones - Panel Completo (2016-2024)",
            show.legend = TRUE)
 
 
@@ -614,7 +612,7 @@ pesos_pca_L1 <- map_df(dimensiones, function(dim) {
   
   # Diagnóstico: varianza explicada por PC1
   var_pc1 <- pca_dim$sdev[1]^2 / sum(pca_dim$sdev^2)
-  message("Dimensión ", dim, " — Varianza explicada PC1: ", round(var_pc1 * 100, 1), "%")
+  message("Dimensión ", dim, " - Varianza explicada PC1: ", round(var_pc1 * 100, 1), "%")
   
   tibble(
     iCode      = colnames(df_dim),
@@ -648,7 +646,7 @@ df_scores_dim <- map_df(dimensiones, function(dim) {
   pivot_wider(names_from = dimension, values_from = score, id_cols = obs) |>
   select(-obs)
 
-# PCA sobre los scores de las 3 dimensiones — solo PC1
+# PCA sobre los scores de las 3 dimensiones - solo PC1
 pca_L2 <- prcomp(df_scores_dim, center = TRUE, scale. = TRUE)
 
 var_pc1_L2 <- pca_L2$sdev[1]^2 / sum(pca_L2$sdev^2)
@@ -671,7 +669,7 @@ Actualizamos los pesos como hemos dicho antes.
 # Nivel 1: Pesos PCA para cada indicador individual dentro de su dimensión
 # Nivel 2: Pesos PCA para las 3 dimensiones (ENV, ECO, SOC) del índice final
 
-# 1.Unimos los pesos de Nivel 1 (indicadores) y Nivel 2 (dimensiones)
+# Unimos los pesos de Nivel 1 (indicadores) y Nivel 2 (dimensiones)
 iMeta_PCA <- iMeta |>
   # Pesos PCA para indicadores individuales (Nivel 1)
   left_join(
@@ -687,7 +685,7 @@ iMeta_PCA <- iMeta |>
   ) |>
   rename(Weight_PCA_L2 = Weight_PCA) |>
   
-  # 2.Asignamos los pesos definitivos
+  # Asignamos los pesos definitivos
   mutate(
     Weight = case_when(
       Level == 1 & !is.na(Weight_PCA_L1) ~ Weight_PCA_L1,  # Pesos PCA para indicadores
@@ -696,19 +694,19 @@ iMeta_PCA <- iMeta |>
     )
   ) |>
   
-  # 3.Limpiamos columnas temporales
+  # Limpiamos columnas temporales
   select(-Weight_PCA_L1, -Weight_PCA_L2)
 
 
 # Verificamos pesos que han salido de las dimensiones 
 
-message("=== PESOS DE LAS DIMENSIONES (Nivel 2) ===")
+message(" PESOS DE LAS DIMENSIONES (Nivel 2) ")
 print(iMeta_PCA |> 
         filter(Level == 2) |> 
         select(iCode, Weight) |>
         arrange(desc(Weight)))
 
-message("\n=== RESUMEN DE PESOS ===")
+message("\n RESUMEN DE PESOS ")
 message("Suma de pesos dimensiones (debería ser 1): ", 
         round(sum(iMeta_PCA |> filter(Level == 2) |> pull(Weight)), 4))
 
@@ -752,7 +750,7 @@ purse_PCA <- Normalise(
 
 dset_norm <- get_dset(purse_PCA, dset = "Normalised")
 
-message("\n=== ESTADÍSTICAS DEL DATASET NORMALIZADO ===")
+message("\n ESTADÍSTICAS DEL DATASET NORMALIZADO ")
 message("Mínimo: ", round(min(dset_norm[, -c(1, 2)], na.rm = TRUE), 2))
 message("Máximo: ", round(max(dset_norm[, -c(1, 2)], na.rm = TRUE), 2))
 message("NAs totales: ", sum(is.na(dset_norm[, -c(1, 2)])))
@@ -808,11 +806,11 @@ for (a in sort(unique(df_rankings$Año))) {
 (Ayuda Perplexity porque usando el paquete COINr con Aggregate () y f_ag="a_gmean" me daba errores. Así que al final la hago manualmente)
 ```{r agregacion_media_geometrica_MANUAL_CON_PESOS, results="asis"}
 # Hacemos media geométrica ponderada con PCA
-# Paso 1: Obtener datos normalizados y pesos
+# Datos normalizados y pesos
 df_norm <- get_dset(purse_PCA, dset = "Normalised") |>
   filter(uCode != "ESP")
 
-# Paso 2: Extraer pesos del PCA (Nivel 1) y ordenar
+# Extraigo pesos del PCA (Nivel 1) y ordeno
 pesos_pca <- iMeta_PCA |>
   filter(Level == 1) |>
   arrange(iCode)
@@ -820,7 +818,7 @@ pesos_pca <- iMeta_PCA |>
 indicadores_ordenados <- pesos_pca$iCode
 pesos_vector <- pesos_pca$Weight
 
-# Paso 3: Función para media geométrica ponderada
+# Función media geométrica ponderada
 media_geometrica_ponderada <- function(row, w) {
   # Convertimos 0/NAs a 1 para asegurar que no nos dará problema la fórmula
   row_segura <- ifelse(is.na(row) | row <= 0, 1, row)
@@ -829,7 +827,7 @@ media_geometrica_ponderada <- function(row, w) {
   exp(sum(w * log(row_segura)) / sum(w))
 }
 
-# Paso 4: Aplicar por fila
+# Aplicamos por fila
 matriz_indicadores <- df_norm |>
   select(all_of(indicadores_ordenados)) |>
   as.matrix()
@@ -841,7 +839,7 @@ scores_mg_ponderada <- apply(
   w = pesos_vector
 )
 
-# Paso 5: Resultados y ranking
+# Resultados y ranking
 df_ranking_ponderado <- df_norm |>
   select(uCode, Time) |>
   mutate(Score = scores_mg_ponderada) |>
@@ -894,8 +892,8 @@ grafico_evolucion_top5 <- df_graficos |>
   geom_point(size = 3) +
   scale_color_brewer(palette = "Set1") +
   labs(
-    title = "Evolución del Índice de Sostenibilidad Turística (2016-2024)",
-    subtitle = "Top 5 Comunidades Autónomas en 2024",
+    title = "Evolución del índice de sostenibilidad turística (2016-2024)",
+    subtitle = "Top 5 CCAA en 2024",
     x = "Año",
     y = "Puntuación (escala 1-100)",
     caption = "Fuente: Elaboración propia con metodología PCA + Media Geométrica Ponderada"
@@ -932,8 +930,8 @@ grafico_heatmap <- df_graficos |>
     labels = scales::label_number(suffix = " pts")
   ) +
   labs(
-    title = "Mapa de Calor: Índice de Sostenibilidad por CCAA y Año",
-    subtitle = "Colores cálidos (naranja/rojo) = mejor sostenibilidad | Colores fríos (azul) = peor sostenibilidad",
+    title = "Mapa de calor: Índice de sostenibilidad por CCAA y año",
+    subtitle = "Colores cálidos = mejor sostenibilidad | Colores fríos = peor sostenibilidad",
     x = "Año",
     y = NULL,
     caption = "Fuente: Elaboración propia (Imputación MICE)"
@@ -970,13 +968,13 @@ grafico_boxplot <- df_graficos |>
 
 
 # Mostramos gráficos
-print("=== GRÁFICO 1: Evolución Top 5 ===")
+print(" GRÁFICO 1: Evolución top 5 ")
 print(grafico_evolucion_top5)
 
-print("\n=== GRÁFICO 2: Heatmap ===")
+print("\n GRÁFICO 2: Heatmap ")
 print(grafico_heatmap)
 
-print("\n=== GRÁFICO 3: Boxplot ===")
+print("\n GRÁFICO 3: Boxplot ")
 print(grafico_boxplot)
 
 
@@ -1061,7 +1059,7 @@ Como lo hacen en el artículo que me pasó Emilio. (https://www.tandfonline.com/
 ```{r caso4_pca_completo_geometrica, results="asis"}
 ## Metodología: fórmula STI = (EcI^α · SI^β · EI^δ)^(1/(α+β+δ))
 
-# 1. Calculamos el índice dimensional para cada dimensión
+# Calculamos el índice dimensional para cada dimensión
 # usando todos los PCs ponderados por varianza explicada
 calcular_indice_dimensional <- function(dim, df_datos, iMeta_ref) {
   # Seleccionar indicadores de la dimensión
@@ -1106,7 +1104,7 @@ calcular_indice_dimensional <- function(dim, df_datos, iMeta_ref) {
   return(indice_dim)
 }
 
-# 2. Se lo aplicamos a las tres dimensiones sobre el panel completo
+# Se lo aplicamos a las tres dimensiones sobre el panel completo
 # df_norm_todos (ya definido del chunk anterior)
 dimensiones_stl <- c("ECO", "SOC", "ENV")
 
@@ -1126,7 +1124,7 @@ df_ids_panel <- get_dset(purse_PCA, dset = "Normalised") |>
 
 df_indices_dim <- bind_cols(df_ids_panel, df_indices_dim)
 
-# 3. Calculamos la varianza explicada por PC1 de cada dimensión
+# Calculamos la varianza explicada por PC1 de cada dimensión
 # Estos son α, β, δ de la fórmula (4) del paper
 calcular_var_pc1 <- function(dim, df_datos, iMeta_ref) {
   inds_dim <- iMeta_ref |>
@@ -1153,7 +1151,7 @@ cat("β (SOC):", round(beta,  4), "\n")
 cat("δ (ENV):", round(delta, 4), "\n")
 cat("α + β + δ:", round(alpha + beta + delta, 4), "\n")
 
-# 4. Índice final
+# Índice final
 # STI_c = (EcI^α · SI^β · EI^δ)^(1/(α+β+δ))
 df_STI <- df_indices_dim |>
   mutate(
@@ -1168,7 +1166,7 @@ df_STI <- df_indices_dim |>
 cat("Parámetros de ponderación dimensional (Varianza explicada PC1):\n")
 cat("α (ECO):", round(alpha, 4), "| β (SOC):", round(beta, 4), "| δ (ENV):", round(delta, 4), "\n")
 
-# 5. Resultados
+# Resultados
 for (a in sort(unique(df_STI$Año))) {
   cat("\n\n### Año", a, "\n")
   
@@ -1196,14 +1194,14 @@ Este enfoque garantiza mayor robustez matemática al capturar la totalidad de la
 # Función que calcula pesos OCDE para una dimensión (ECO, SOC o ENV)
 calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref) {
   
-  # 1. Seleccionamos indicadores que pertenecen a la dimensión
+  # Seleccionamos indicadores que pertenecen a la dimensión
   inds_dim <- iMeta_ref |> filter(Level == 1, Parent == dim) |> pull(iCode)
   df_dim <- df_datos |> select(any_of(inds_dim))
   
   # Eliminamos variables con varianza 0 (necesario para el PCA)
   df_dim <- df_dim |> select(where(\(x) var(x, na.rm = TRUE) > 1e-10))
   
-  # 2. Determinamos cuántos componentes retener (Criterio OCDE: Eigenvalue > 1)
+  # Determinamos cuántos componentes retener (Criterio OCDE: Eigenvalue > 1)
   pca_previo <- prcomp(df_dim, center = TRUE, scale. = TRUE)
   n_factores <- sum(pca_previo$sdev^2 > 1)
   
@@ -1215,17 +1213,17 @@ calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref) {
     return(tibble(iCode = names(pesos), Weight_OCDE = pesos, Factor = "F1", Var_Factor = 1))
   }
 
-  # 3. Rotación Varimax (Paso 3 del manual)
+  # Rotación Varimax
   # Usamos la función principal del paquete psych
   rotacion <- psych::principal(df_dim, nfactors = n_factores, rotate = "varimax")
   
-  # 4. Asignamos cada indicador al factor donde más carga tiene (Paso 4 del manual)
+  # Asignamos cada indicador al factor donde más carga tiene 
   loadings_mat <- as.data.frame(unclass(rotacion$loadings))
   cargas_maximas <- loadings_mat |>
     mutate(iCode = rownames(loadings_mat),
            Factor_Asignado = colnames(loadings_mat)[apply(loadings_mat, 1, which.max)])
   
-  # 5. Calculamos pesos intermedios y finales
+  # Calculamos pesos intermedios y finales
   pesos_finales <- cargas_maximas |>
     pivot_longer(cols = starts_with("RC"), names_to = "Factor", values_to = "Carga") |>
     filter(Factor == Factor_Asignado) |>
@@ -1291,16 +1289,16 @@ tabla_factores_detalle |>
 
 Calculamos el ranking final con el método de la OCDE PCA/FA: 
 ```{r caso5_ranking_ocde, results="asis"}
-# 1. Usamos los identificadores ya filtrados
+# Usamos los identificadores ya filtrados
 df_ids_panel <- get_dset(purse_PCA, dset = "Normalised") |>
   filter(uCode != "ESP") |>
   select(uCode, Time)
 
-# 2. Preparamos pesos
+# Preparamos pesos
 pesos_finales_vector <- pesos_ocde_L1$Weight_OCDE
 names(pesos_finales_vector) <- pesos_ocde_L1$iCode
 
-# 3. Preparamos matriz de datos numéricos
+# Preparamos matriz de datos numéricos
 matriz_datos <- df_norm_todos |> 
   select(any_of(names(pesos_finales_vector))) |> 
   as.matrix()
@@ -1308,7 +1306,7 @@ matriz_datos <- df_norm_todos |>
 # Verificamos que las columnas están en el orden correcto para el producto matricial
 matriz_datos <- matriz_datos[, names(pesos_finales_vector)]
 
-# 4. Cálculo del Score y ranking
+# Cálculo del Score y ranking
 df_STI_OCDE <- df_ids_panel |>
   mutate(Score_OCDE = as.vector(matriz_datos %*% pesos_finales_vector) / 3) |>
   group_by(Time) |>
@@ -1316,7 +1314,7 @@ df_STI_OCDE <- df_ids_panel |>
   ungroup() |>
   rename(CCAA = uCode, Año = Time)
 
-# 5. Mostrar resultados
+# Mostrar resultados
 for (a in sort(unique(df_STI_OCDE$Año))) {
   cat("\n\n### Año", a, "\n")
   
@@ -1341,13 +1339,13 @@ Es el caso que mejor captura la realidad multidimensional de la sostenibilidad t
 # COMPARATIVA RESULTADOS (RANKING)
 ## Todos los años
 ```{r comparativa_rankings_todos_anios, results="asis"}
-# 1. Unificamos todos los rankings (mismo proceso que antes pero para todo el panel)
+# Unificamos todos los rankings (mismo proceso que antes pero para todo el panel)
 comp_caso1 <- df_rankings |> select(uCode = CCAA, Time = Año, Caso1 = Posicion)
 comp_caso2 <- df_ranking_ponderado |> select(uCode = CCAA, Time = Año, Caso2 = Posicion)
 comp_caso3 <- df_ranking_zscore |> select(uCode = CCAA, Time = Año, Caso3 = Posicion)
 comp_caso4 <- df_STI |> select(uCode = CCAA, Time = Año, Caso4 = Posicion)
 comp_caso5 <- df_STI_OCDE |> select(uCode = CCAA, Time = Año, Caso5 = Posicion)
-# 2. Unión de los 5 casos
+# Unimos los 5 casos
 df_maestro_rankings <- comp_caso1 |>
 left_join(comp_caso2, by = c("uCode", "Time")) |>
 left_join(comp_caso3, by = c("uCode", "Time")) |>
@@ -1372,13 +1370,13 @@ for(a in sort(unique(df_maestro_rankings$Time))){
     print()
 }
 ```
-La columna SD_Metodos mide la volatilidad: un valor bajo indica que la región es estable en esa posición independientemente del método utilizado. Un valor alto indica alta sensibilidad metodológica. De estas tablas observamos: 
+La columna SD_Metodos: un valor bajo indica que la región es estable en esa posición independientemente del método utilizado. Un valor alto indica alta sensibilidad metodológica. De estas tablas observamos: 
 - Liderazgo del norte: independientemente del método y el año, PV, La Rioja y Navarra se sitúan en el Top 5 a lo largo de toda la serie temporal. Tienen una baja desviación estándar por lo que su liderazgo es real y robusto. 
 -Baleares, muestran desviaciones estándar muy altas. P. ej., en 2024, Baleares pasa del puesto 11 en los casos 1 y 3 al puesto 1 en el caso 2 y al puesto 2 en el caso 4. 
 - Caso 1 y caso 3 son prácticamente iguales en todos los años y regiones, por lo que el método de normalización no influye en nuestro caso. 
 
 ## Ejemplo 2022
-Ejemplo de resultados para 2022
+Ejemplo de resultados para un año concreto: 2022. (era del que más datos teníamos previamente a la imputación)
 ```{r comparativa_rankings_2022, results="asis"}
 # Unificamos todos los rankings en un solo dataframe
 # Extraemos solo uCode, Time y la Posición de cada caso
@@ -1398,32 +1396,33 @@ comp_caso4 <- df_STI |>
 comp_caso5 <- df_STI_OCDE |> 
   select(uCode = CCAA, Time = Año, Caso5 = Posicion)
 
-# 2. Unión de todos los casos
+# Unimos de todos los casos
 df_comparativa_total <- comp_caso1 |>
   left_join(comp_caso2, by = c("uCode", "Time")) |>
   left_join(comp_caso3, by = c("uCode", "Time")) |>
   left_join(comp_caso4, by = c("uCode", "Time")) |>
   left_join(comp_caso5, by = c("uCode", "Time"))
 
-# 3. Imprimimos tabla
+# Imprimimos tabla
 ver_comparativa_anio <- function(anio) {
   cat("\n\n### Comparativa de Rankings: Año", anio, "\n")
   
   df_comparativa_total |>
     filter(Time == anio) |>
     rowwise() |>
-    # Calculamos la desviación estándar (volatilidad)
+    # Calculamos la desviación estándar
     mutate(Desviacion = round(sd(c_across(starts_with("Caso")), na.rm = TRUE), 1)) |>
     ungroup() |>
     arrange(Caso5) |>
+    select(-Time) |> 
     knitr::kable(
       caption = paste("Comparativa de Posiciones según Metodología -", anio),
-      col.names = c("CCAA", "Año", "Aritmética", "Geométrica P.", "Z-Score", "STI (PCA)", "OCDE (FA)", "Volatilidad"),
+      col.names = c("CCAA", "Aritmética", "Geométrica P.", "Z-Score", "STI", "OCDE", "Desviación estándar"),
       format = "html"
     )
 }
 
-# 4. Ver el resultado de 2022
+# Ver el resultado de 2022
 ver_comparativa_anio(2022)
 ```
 
@@ -1437,7 +1436,7 @@ grafico_chupachup_3_lineas <- function(df, anio, casos_elegidos) {
     stop("Selecciona exactamente 3 casos.")
   }
   
-  # 1. Preparar datos y ordenar por el primer caso elegido para que el ranking tenga sentido visual
+  # Preparar datos y ordenar por el primer caso elegido para que el ranking tenga sentido visual
   df_plot <- df |>
     filter(Time == anio) |>
     select(uCode, all_of(casos_elegidos)) |>
@@ -1449,7 +1448,6 @@ grafico_chupachup_3_lineas <- function(df, anio, casos_elegidos) {
       values_to = "Ranking"
     )
 
-  # 2. Creamos un data frame para el fondo intercalado (las franjas grises)
   ccaas <- levels(df_plot$uCode)
   df_fondo <- data.frame(
     uCode = ccaas,
@@ -1458,39 +1456,38 @@ grafico_chupachup_3_lineas <- function(df, anio, casos_elegidos) {
     llenado = rep(c("A", "B"), length.out = length(ccaas))
   )
 
-  # 3. El Gráfico
   ggplot() +
-    # Fondo intercalado para guiar la vista
+    # Fondo intercalado
     geom_rect(data = df_fondo, 
               aes(ymin = y_min, ymax = y_max, xmin = 0.5, xmax = 19.5, fill = llenado), 
               alpha = 0.1, show.legend = FALSE) +
     scale_fill_manual(values = c("A" = "transparent", "B" = "grey20")) +
     
-    # Líneas (palos) - Usamos position_dodge para que no se solapen
+    # Usamos position_dodge para que no se solapen las líneas
     geom_linerange(data = df_plot,
                    aes(y = uCode, xmin = 19, xmax = Ranking, color = Metodologia),
                    position = position_dodge(width = 0.6),
                    linewidth = 0.8) +
     
-    # Puntos (caramelos) - Con el mismo desplazamiento
+    # Puntos 
     geom_point(data = df_plot,
                aes(x = Ranking, y = uCode, color = Metodologia),
                position = position_dodge(width = 0.6),
                size = 3) +
     
     # Configuración de ejes y estética
-    scale_x_reverse(breaks = 1:19, expand = c(0.02, 0.02)) + # El 1 a la derecha o izquierda según prefieras
+    scale_x_reverse(breaks = 1:19, expand = c(0.02, 0.02)) +
     scale_color_brewer(palette = "Set1") +
     labs(
-      title = "Comparativa Detallada de Rankings por Metodología",
-      subtitle = paste("Año", anio, "| Cada región tiene 3 líneas independientes para evitar solapamientos"),
-      x = "Posición en el Ranking (1 es la mejor)",
+      title = "Comparativa de rankings por metodología",
+      subtitle = paste("Año", anio),
+      x = "Posición en el ranking (siendo 1 la mejor)",
       y = NULL,
       color = "Método"
     ) +
     theme_minimal() +
     theme(
-      panel.grid.major.y = element_blank(), # Quitamos las líneas horizontales para usar el fondo
+      panel.grid.major.y = element_blank(),
       panel.grid.minor = element_blank(),
       axis.text.y = element_text(face = "bold", size = 10),
       legend.position = "bottom",
@@ -1499,7 +1496,7 @@ grafico_chupachup_3_lineas <- function(df, anio, casos_elegidos) {
 }
 
 
-# Llamada a la función
+# Llamamos a la función
 grafico_chupachup_3_lineas(
   df = df_maestro_rankings, 
   anio = 2022, 
@@ -1554,3 +1551,63 @@ Conclusiones que vemos de estos resultados:
 - caso 5: bastante alineado con caso 1, mantienen patrones similares, pero con valores algo más altos. 
 - patrones globales: aparecen casi siempre arriba: PV, RI, NC, AR. Regiones que suelen aparecer abajo: CN, CE y MC (en algunos años)
 - en 2023 y 2024 los valores suben mucho con respecto a otros años. 
+
+
+## Mapa de puntuaciones por CCAA - Año 2022
+```{r}
+#librerías necesarias para mapas (algunas ya están repetidas pero las dejo por si acaso)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(giscoR)
+
+# Mapa oficial CCAA (NUTS2)
+spain_map <- gisco_get_nuts(
+  country = "ES",
+  nuts_level = 2,
+  resolution = "10"
+) |>
+  filter(CNTR_CODE == "ES")
+
+# Correspondencia NUTS2 (los códigos uCode)
+ccaa_match <- data.frame(
+  NUTS_ID = c("ES11","ES12","ES13","ES21","ES22","ES23","ES24",
+              "ES30","ES41","ES42","ES43","ES51","ES52","ES53",
+              "ES61","ES62","ES63","ES64","ES70"),
+  uCode = c("ES-GA","ES-AS","ES-CB","ES-PV","ES-NC","ES-RI","ES-AR",
+            "ES-MD","ES-CL","ES-CM","ES-EX","ES-CT","ES-VC","ES-IB",
+            "ES-AN","ES-MC","ES-CE","ES-ML","ES-CN")
+)
+
+spain_map <- spain_map |>
+  left_join(ccaa_match, by = "NUTS_ID")
+
+# Filtramos el año que queremos
+scores <- df_scores_raw |>
+  filter(Time == 2022)
+
+# Pasamos a formato largo
+scores_long <- scores |>
+  pivot_longer(
+    cols = starts_with("Caso"),
+    names_to = "caso",
+    values_to = "score"
+  )
+
+# Unimos mapa + datos
+map_data <- spain_map |>
+  left_join(scores_long, by = "uCode")
+
+# Gráfico
+ggplot(map_data) +
+  geom_sf(aes(fill = score), color = "white") +
+  scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
+  facet_wrap(~caso) +
+  labs(
+    title = "Comparación de scores por CCAA (2022)",
+    fill = "Score"
+  ) +
+  theme_minimal()
+```
+duda: dónde están Ceuta y Melilla ¿?
