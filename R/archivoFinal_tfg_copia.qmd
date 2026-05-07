@@ -2,6 +2,7 @@
 title: "archivoFinal_tfg"
 format: 
   html:
+    embed-resources: true
     toc: true
     toc-depth: 4
 editor: source
@@ -32,6 +33,8 @@ library(knitr)
 library(psych)
 library(purrr)
 library(ggcorrplot)
+library(naniar)
+library(VIM)
 ```
 
 Cargamos los datos y los retocamos para que nos cuadre con la estructura que necesita COINr.
@@ -173,7 +176,8 @@ indicadores_eliminar <- c("IAMB0004", "IAMB0005", "IAMB0003", "IECO0012", "IECO0
 
 # Filtramos iData eliminando esos indicadores
 iData_clean <- iData |>
-  select(-any_of(indicadores_eliminar))
+  select(-any_of(indicadores_eliminar)) |> 
+  filter(uCode != "ESP")
 
 # Verificación
 print(paste("Indicadores restantes:", ncol(iData_clean) - 2)) # -2 por uCode y Time
@@ -333,8 +337,8 @@ Winmax=5 es el número máximo de puntos a winsorizar.
 Treat trata cada año del purse de forma independiente: entra en 1 año, mira la columna del indicador X (las 19 regiones), calcula la asimetría sólo con esos 19 datos y winsoriza si hace falta. Luego sigue con el siguiente año y repite el proceso.
 Riesgo de este método: perdemos la perspectiva histórica. Un outlier en 2016 puede ser un valor normal en 2024 p ej.
 
-```{r tratamiento_y_verificacion_outliers}
-# Aplicamos la winsorización al purse
+```{r tratamiento_outliers_completo}
+# 1. Aplicamos el tratamiento (Winsorización) al purse
 purse <- Treat(
   purse,
   dset = "Imputed",
@@ -343,40 +347,271 @@ purse <- Treat(
                   winmax = 5, 
                   skew_thresh = 2,
                   kurt_thresh = 3.5,
-                  force_win = TRUE),
-  disable = FALSE
+                  force_win = TRUE)
 )
 
-# Creamos la tabla de comparación antes vs después
+# 2. Extraemos datos para comparar antes vs después
 df_antes   <- get_dset(purse, "Imputed")
 df_despues <- get_dset(purse, "Treated")
 
-comparacion <- df_antes |>
-  pivot_longer(-c(uCode, Time), names_to = "iCode", values_to = "antes") |>
+# 3. Métricas de escala anuales para dar contexto
+metricas_escala <- df_antes |>
+  pivot_longer(-c(uCode, Time), names_to = "iCode", values_to = "valor") |>
+  group_by(Time, iCode) |>
+  summarise(
+    Media_Anual   = mean(valor, na.rm = TRUE),
+    Mediana_Anual = median(valor, na.rm = TRUE),
+    Max_Absoluto  = max(valor, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 4. Construcción de la tabla base de outliers
+tabla_outliers <- df_antes |>
+  pivot_longer(-c(uCode, Time), names_to = "iCode", values_to = "Original") |>
   left_join(
-    df_despues |>
-      pivot_longer(-c(uCode, Time), names_to = "iCode", values_to = "despues"),
+    df_despues |> 
+      pivot_longer(-c(uCode, Time), names_to = "iCode", values_to = "Tratado"),
     by = c("uCode", "Time", "iCode")
   ) |>
-  filter(antes != despues) # Solo nos quedamos con los que ha cambiado R realmente
+  filter(abs(Original - Tratado) > 1e-9) |>
+  left_join(iMeta |> select(iCode, iName), by = "iCode") |>
+  left_join(metricas_escala, by = c("Time", "iCode")) |>
+  mutate(Vs_Media = round(Original / Media_Anual, 2)) |>
+  select(
+    Año = Time, CCAA = uCode, Indicador = iName, 
+    Original, Tratado, Media = Media_Anual, 
+    Mediana = Mediana_Anual, `Máx Año` = Max_Absoluto, 
+    `Vs Media` = Vs_Media
+  )
 
-# Mostramos los resultados
-message("Se han modificado ", nrow(comparacion), " valores atípicos.")
+# --- IMPRESIÓN DE RESULTADOS ---
 
-# Tabla de valores específicos cambiados
-print(comparacion)
+cat("### Análisis del tratamiento de valores atípicos (Winsorización)\n")
+cat("Se han corregido un total de **", nrow(tabla_outliers), "** valores por superar los umbrales de asimetría y curtosis.\n\n")
 
-# Resumen de cuántas veces se ha actuado sobre cada indicador
-resumen_indicadores <- comparacion |>
-  group_by(iCode) |>
-  summarise(Veces_Winsorizado = n()) |>
-  arrange(desc(Veces_Winsorizado))
+# A. Detalle de cambios 
+tabla_outliers |>
+  #head(20) |>
+  mutate(across(where(is.numeric), \(x) round(x, 2))) |>
+  knitr::kable(caption = "Valores modificados (Original vs Tratado).")
 
-print(resumen_indicadores)
+# B. Resumen por Indicador
+resumen_indicadores <- tabla_outliers |>
+  group_by(Indicador) |>
+  summarise(Casos = n()) |>
+  arrange(desc(Casos))
+
+print(knitr::kable(resumen_indicadores, caption = "Frecuencia de tratamiento por indicador."))
+
+# C. Resumen por Región (CCAA)
+resumen_ccaa <- tabla_outliers |>
+  group_by(CCAA) |>
+  summarise(
+    `Total Outliers` = n(),
+    `Indicadores Afectados` = n_distinct(Indicador)
+  ) |>
+  arrange(desc(`Total Outliers`))
+
+cat("\n### Frecuencia de Outliers por Comunidad Autónoma\n")
+print(knitr::kable(resumen_ccaa, 
+                   caption = "Detección de valores atípicos por región (total años)."))
+
+# D. Resumen por Año
+resumen_temporal <- tabla_outliers |>
+  group_by(Año) |>
+  summarise(
+    `Total Outliers` = n(),
+    `CCAA con Outliers` = n_distinct(CCAA)
+  ) |>
+  arrange(Año)
+
+cat("\n### Frecuencia de Outliers por Año\n")
+print(knitr::kable(resumen_temporal, 
+                   caption = "Evolución temporal de la detección de valores atípicos."))
 ```
-Tras la winsorización, se han tratado un total de 28 valores atípicos distribuidos en 8 indicadores distintos. El tratamiento se ha ejecutado año a año, identificando y ajustando únicamente aquellos puntos de datos que presentaban niveles críticos de asimetría (∣Skew∣>2) y curtosis (Kurtosis>3.5). Este ajuste es fundamental para la robustez del modelo, ya que evita que valores extremos en indicadores específicos (como los observados en la percepción climática (ISOC0008) o de seguridad (ISOC0007)) distorsionen la normalización min-max y, en consecuencia, el ranking final de las CCAA. 
+Tras la winsorización, se han tratado un total de 24 valores atípicos distribuidos en 8 indicadores distintos. El tratamiento se ha ejecutado año a año, identificando y ajustando únicamente aquellos puntos de datos que presentaban niveles críticos de asimetría (∣Skew∣>2) y curtosis (Kurtosis>3.5). Este ajuste es fundamental para la robustez del modelo, ya que evita que valores extremos en indicadores específicos (como los observados en la percepción climática (ISOC0008) o de seguridad (ISOC0007)) distorsionen la normalización min-max y, en consecuencia, el ranking final de las CCAA. 
 
-ISOC0008 es el indicador más "castigado" (9 veces). Significa que en casi todos los años hay alguna CCAA que tiene un valor de clima tan extremo (muy bueno o muy malo) que rompía la normalidad del grupo.
+```{r}
+cat("\n### Distribución de indicadores con Outliers\n")
+
+# 1. Identificamos qué indicadores y en qué años hubo cambios
+cambios_detectados <- tabla_outliers |>
+  select(Año, Indicador) |>
+  distinct()
+
+# 2. Preparamos los datos para graficar (long format comparativo)
+# Necesitamos mapear de nuevo iName a iCode para filtrar df_antes/despues
+map_nombres <- iMeta |> select(iCode, iName)
+
+for(i in 1:nrow(cambios_detectados)){
+  
+  anio_act <- cambios_detectados$Año[i]
+  nom_ind  <- cambios_detectados$Indicador[i]
+  cod_ind  <- map_nombres$iCode[map_nombres$iName == nom_ind]
+  
+  # Extraemos valores antes y después para ese año/indicador
+  datos_plot <- data.frame(
+    uCode    = df_antes$uCode[df_antes$Time == anio_act],
+    Original = df_antes[[cod_ind]][df_antes$Time == anio_act],
+    Tratado  = df_despues[[cod_ind]][df_despues$Time == anio_act]
+  ) |>
+    pivot_longer(cols = c(Original, Tratado), names_to = "Estado", values_to = "Valor")
+  
+  # Creamos el gráfico
+  p <- ggplot(datos_plot, aes(x = Valor, fill = Estado)) +
+    geom_dotplot(binwidth = diff(range(datos_plot$Valor, na.rm=T))/30, 
+                 stackgroups = TRUE, binpositions = "all", alpha = 0.6) +
+    facet_wrap(~Estado, ncol = 1) +
+    labs(
+      title = paste("Efecto de Winsorización:", map_nombres$iCode, "-", nom_ind),
+      subtitle = paste("Año:", anio_act, "| Los valores extremos se desplazan al límite máximo permitido"),
+      x = "Valor del Indicador",
+      y = "Frecuencia (Puntos = Regiones)"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "none",
+          axis.text.y = element_blank(),
+          panel.grid.minor = element_blank()) +
+    scale_fill_manual(values = c("Original" = "#F8766D", "Tratado" = "#00BFC4"))
+
+  print(p)
+}
+```
+
+Quiero que salgan las etiquetas en cada punto: 
+
+```{r}
+library(ggrepel)
+
+p <- ggplot(datos_plot, aes(x = Valor, y = 0, color = Estado, label = uCode)) +
+
+  geom_point(size = 3) +
+
+  geom_text_repel(
+    size = 3,
+    nudge_y = 0.15,
+    segment.alpha = 0.5,
+    show.legend = FALSE
+  ) +
+
+  facet_wrap(~Estado, ncol = 1) +
+
+  labs(
+    title = paste("Efecto de Winsorización:", cod_ind, "-", nom_ind),
+    subtitle = paste("Año:", anio_act),
+    x = "Valor del Indicador",
+    y = ""
+  ) +
+
+  theme_minimal() +
+
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+
+  scale_color_manual(values = c("Original" = "#F8766D",
+                                "Tratado" = "#00BFC4"))
+
+print(p)
+```
+
+Quiero que salgan las etiquetas bien
+```{r}
+cat("\n### Distribución de indicadores con Outliers\n")
+
+library(tidyverse)
+library(ggrepel)
+
+# 1. Identificamos qué indicadores y en qué años hubo cambios
+cambios_detectados <- tabla_outliers |>
+  select(Año, Indicador) |>
+  distinct()
+
+# 2. Tabla auxiliar nombres
+map_nombres <- iMeta |>
+  select(iCode, iName)
+
+# 3. Bucle automático para TODOS los casos detectados
+for(i in 1:nrow(cambios_detectados)){
+  
+  anio_act <- cambios_detectados$Año[i]
+  nom_ind  <- cambios_detectados$Indicador[i]
+  
+  # Buscar código indicador
+  cod_ind <- map_nombres$iCode[map_nombres$iName == nom_ind][1]
+  
+  # Si no existe, saltar
+  if(length(cod_ind) == 0 || is.na(cod_ind)) next
+  
+  # Construimos datos comparativos
+  datos_plot <- data.frame(
+    uCode    = df_antes$uCode[df_antes$Time == anio_act],
+    Original = df_antes[[cod_ind]][df_antes$Time == anio_act],
+    Tratado  = df_despues[[cod_ind]][df_despues$Time == anio_act]
+  ) |>
+    pivot_longer(
+      cols = c(Original, Tratado),
+      names_to = "Estado",
+      values_to = "Valor"
+    ) |>
+    drop_na()
+  
+  # Gráfico mejorado con etiquetas de región
+  p <- ggplot(
+        datos_plot,
+        aes(
+          x = Valor,
+          y = Estado,
+          color = Estado,
+          label = uCode
+        )
+      ) +
+    
+    geom_jitter(
+      height = 0.08,
+      size = 2.8,
+      alpha = 0.9
+    ) +
+    
+    geom_text_repel(
+      size = 3,
+      show.legend = FALSE,
+      direction = "y",
+      box.padding = 0.25,
+      point.padding = 0.2,
+      max.overlaps = Inf
+    ) +
+    
+    labs(
+      title = paste("Efecto de Winsorización:", cod_ind, "-", nom_ind),
+      subtitle = paste("Año:", anio_act),
+      x = "Valor del Indicador",
+      y = ""
+    ) +
+    
+    scale_color_manual(
+      values = c(
+        "Original" = "#F8766D",
+        "Tratado"  = "#00BFC4"
+      )
+    ) +
+    
+    theme_minimal(base_size = 12) +
+    
+    theme(
+      legend.position = "right",
+      panel.grid.minor = element_blank(),
+      axis.text.y = element_text(face = "bold"),
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(size = 10)
+    )
+  
+  print(p)
+}
+```
+
 
 # Normalización min-max [1,100]
 Ponemos el 1 aposta porque si ponemos de 0-100, el 0 nos puede dar problema en la media geométrica.
@@ -393,7 +628,7 @@ purse <- Normalise(
 # ANÁLISIS MULTIVARIANTE
 ## Correlaciones entre indicadores individuales año 2022 como ejemplo
 Elijo el año 2022 como ejemplo porque es el año del que más datos tenemos.
-```{r correlaciones_purse}
+```{r correlaciones_purse, fig.width=15, fig.height=15, results='asis'}
 coin_2022 <- purse$coin[[which(purse$Time == 2022)]]
 
 # uso función nativa del paquete COINr para dibujarlo
@@ -404,16 +639,142 @@ plot_corr(
   flagging = TRUE,
   cortype  = "pearson"
 )
+
+# Ejemplos de distintos gráficos que podemos hacer con la función plot_dist de COINr
+plot_dist(coin_2022, iCodes = c("IECO0033","IECO0059"), dset = "Normalised", type="Box", normalise = FALSE)
+plot_dist(coin_2022, iCodes = c("IECO0033","IECO0059"), dset = "Normalised", type="Violindot", normalise = FALSE)
+plot_dist(coin_2022, iCodes = c("IECO0033","IECO0059"), dset = "Normalised", type="Histogram", normalise = FALSE)
+
+# dataframe de correlaciones en 2022
+df_corr_2022 <- get_corr(coin_2022, dset="Normalised", Levels=1, cortype="pearson", make_long=TRUE)
+
+# quiero extraer una lista con las correlaciones más altas
+corr_altas_2022 <- df_corr_2022 |> 
+  filter(Correlation>=0.8, Var1 != Var2, Var1 < Var2) |>
+  select(Var1,Var2,Correlation) |> 
+  arrange(desc(Correlation))
+
+kable(head(corr_altas_2022, 20), digits = 3, caption = "Top 20 Correlaciones más altas")
+
 ```
 Conclusiones viendo el gráfico: 
 
-Cohesión en la dimensión ECO: bloque densamente correlacionado en los indicadores IECO... (valores de r>0.80). Esto indica que el desarrollo económico en las CCAA tiende a ser multidimensional y sinérgico; sin embargo, la presencia de correlaciones cercanas a 1 entre ciertos indicadores sugiere una alta redundancia informativa que debe ser considerada en la ponderación final.
+Cohesión en la dimensión ECO: bloque densamente correlacionado en los indicadores IECO... (valores de r>0.80). Esto sugiere una alta redundancia informativa que debe ser considerada en la ponderación final.
 
 Independencia de las dimensiones SOC y ENV: a diferencia del bloque económico, los indicadores ISOC... e IAMB... presentan una baja correlación inter-dimensional y entre ellos mismos. Esto valida su inclusión en el modelo, ya que aportan información única y no redundante que los indicadores económicos no son capaces de capturar por sí solos.
 
-Trade-offs y conflictos de sostenibilidad: las correlaciones negativas entre algunos indicadores de crecimiento económico y sostenibilidad social/ambiental sugiere la existencia de "conflictos de objetivos". Estos puntos son críticos para el análisis, ya que identifican áreas donde el progreso económico podría estar comprometiendo otros pilares del bienestar.
+Trade-offs y conflictos de sostenibilidad: las correlaciones negativas entre algunos indicadores de crecimiento económico y sostenibilidad social/ambiental sugiere la existencia de "conflictos de intereses". Estos puntos son críticos para el análisis, ya que identifican áreas donde el progreso económico podría estar comprometiendo otros pilares del bienestar.
 
 Validez del enfoque multidimensional: la heterogeneidad de colores en el gráfico y la presencia de amplias zonas de baja correlación confirman que estamos analizando un fenómeno complejo y que un ranking basado únicamente en variables económicas no sería suficiente para reflejar la realidad de la sostenibilidad regional en España.
+
+## Correlaciones por año 
+```{r correlaciones_por_año, results="asis", fig.height=15, fig.width=15}
+anios_disponibles <- sort(unique(purse$Time))
+
+for (a in anios_disponibles) {
+  
+  # Extraemos el año
+  resultado <- tryCatch({
+  coin_anio <- purse$coin[[which(purse$Time == a)]]
+  
+  # plot_corr para todos los años
+  
+  cat("\n\n### Matriz de Correlación - Año", a, "\n")
+  
+  p <- plot_corr(
+    coin_anio,
+    dset     = "Normalised",
+    grouplev = 3, 
+    flagging  = TRUE,
+    cortype  = "pearson",
+    text_size = 3
+  )
+  print(p)
+
+  # tabla de correlaciones altas 
+  cat("\n\n### Tabla de correlaciones más altas (>0.8) - Año", a, "\n")
+    
+  # dataframe de correlaciones
+  df_corr_anio <- get_corr(coin_anio, dset="Normalised", Levels=1, cortype="pearson", make_long=TRUE)
+  
+  # lista con las correlaciones más altas (>0.8)
+  corr_altas_anio <- df_corr_anio |> 
+    filter(Correlation>=0.8, 
+           Var1 < Var2) |>
+    arrange(desc(Correlation))
+  
+  print(knitr::kable(head(corr_altas_anio, n = 10), digits = 3, caption = paste("Top 10 correlaciones generales - Año", a)))
+  
+  # correlaciones que nos "descuadran" en el PCA+Varimax (pondríamos los indicadores juntos pero salen separados)
+  eco_rc1 <- c("IECO0046","IECO0058","IECO0059")
+  eco_rc6 <- c("IECO0044","IECO0045","IECO0047","IECO0056","IECO0057")
+  todos_eco <- c(eco_rc1,eco_rc6)
+  
+  soc_rc1 <- c("ISOC0013","ISOC0010","ISOC0012")
+  soc_rc2 <- c("ISOC0011")
+  todos_soc <- c(soc_rc1,soc_rc2)
+  
+  # creo mapeo de RCs
+    # Creamos un dataframe auxiliar para "etiquetar" cada código
+    mapeo_rc <- data.frame(
+      Cod = c(eco_rc1, eco_rc6, soc_rc1, soc_rc2),
+      RC  = c(rep("RC1", length(eco_rc1)), 
+              rep("RC6", length(eco_rc6)), 
+              rep("RC1", length(soc_rc1)), 
+              rep("RC2", length(soc_rc2)))
+    )
+
+    # Función interna para añadir las etiquetas RC a las tablas
+    añadir_rc <- function(tabla) {
+      tabla |>
+        left_join(mapeo_rc, by = c("Var1" = "Cod")) |>
+        rename(RC_Var1 = RC) |>
+        left_join(mapeo_rc, by = c("Var2" = "Cod")) |>
+        rename(RC_Var2 = RC) |>
+        # Reordenamos columnas para que sea legible
+        select(Var1, RC_Var1, Var2, RC_Var2, Correlation)
+    }
+  
+  precio_estrellas <- df_corr_anio |> 
+    filter(Var1 %in% todos_eco, Var2 %in% todos_eco, Var1<Var2) |> 
+    arrange(desc(Correlation)) |> 
+    añadir_rc()
+  
+  cat("\n\n### Correlaciones dimensión ECO, RC1 y RC6 (precio medio según antelación y estrellas hotel) - Año", a, "\n")
+  if(nrow(precio_estrellas) > 0) {
+    print(knitr::kable(precio_estrellas, digits = 3, caption = paste("Correlaciones dimensión ECO, RC1 y RC6 (precio medio según antelación y estrellas hotel) - Año", a)))
+    leyenda_eco <- iMeta |> filter(iCode %in% unique(c(precio_estrellas$Var1, precio_estrellas$Var2))) |> select(iCode, iName)
+      cat("\n**Descripción indicadores:**", paste(leyenda_eco$iCode, leyenda_eco$iName, sep=": ", collapse=" | "), "\n")
+  } else {
+    cat("\nNo hay correlaciones significativas en este grupo.\n")
+  }
+  
+  satisfaccion <- df_corr_anio |> 
+    filter(Var1 %in% todos_soc, Var2 %in% todos_soc, Var1<Var2) |> 
+    arrange(desc(Correlation))|> 
+    añadir_rc()
+  
+  cat("\n\n### Correlaciones dimensión SOC, RC1 y RC2 (satisfacción hoteles según estrellas) - Año", a, "\n")
+  if(nrow(satisfaccion) > 0) {
+    print(knitr::kable(satisfaccion, digits = 3, caption = paste("Correlaciones dimensión SOC, RC1 y RC2 (satisfacción hoteles según estrellas) - Año", a)))
+    leyenda_soc <- iMeta |> filter(iCode %in% unique(c(satisfaccion$Var1, satisfaccion$Var2))) |> select(iCode, iName)
+      cat("\n**Descripción indicadores:**", paste(leyenda_soc$iCode, leyenda_soc$iName, sep=": ", collapse=" | "), "\n")
+  } else {
+    cat("\nNo hay correlaciones significativas en este grupo.\n")
+  }
+  
+  }, error = function(e) {
+    # Si algo falla (ya sea el gráfico o la tabla), se ejecuta esto y el bucle SIGUE
+    cat("\n\n> **AVISO:** No se han podido procesar las correlaciones para el año", a, 
+        ". Probablemente debido a datos vacíos o falta de varianza.\n")
+    message(paste("Error en año", a, ":", e$message)) # Esto sale en la consola de RStudio
+  })
+  
+  cat("\n---\n")
+}
+```
+
+
 
 ## PCA y clustering para todo el panel
 Análisis exploratorio. Hacemos PCA sobre el panel completo apilado (todas las CCAA x tods los años) para entender la estructura de los datos y ver cuánta varianza explica la PC1. También hacemos clustering jerárquico (dendrograma) para ver cómo se agrupan los indicadores. (Aquí todavía no guardamos los pesos en los metadatos del índice, sólo es exploratorio).
@@ -457,16 +818,11 @@ df_pca_panel <- df_norm_panel |>
   mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
 
 cat("\n Indicadores finales para PCA: ", ncol(df_pca_panel), "\n")
-cat("════════════════════════════════\n")
 
 # Ejecución del PCA
 pca_result_panel <- prcomp(df_pca_panel, center = TRUE, scale. = TRUE)
 print(pca_result_panel)
 summary(pca_result_panel)
-
-# Biplot
-biplot(pca_result_panel, scale = 0, cex = 0.5,
-       main = "PCA - Estructura del panel completo (2016-2024)")
 
 varianza_explicada <- summary(pca_result_panel)$importance[2, ]
 
@@ -554,8 +910,7 @@ CASO k=4: análisis dendrograma.
 -Cluster 4. El segmento de lujo: reune los precios de los hoteles de 5 estrellas entre semana y en fin de semana. El algoritmo ha separado por completo los hoteles 5 estrellas del resto del mercado. Esto demuestra que el segmento de lujo tiene una dinámica de fijación de precios propia e independiente, ajeno al turismo de masas.
 
 ## Correlaciones panel
-```{r df_norm_todos}
-# Extraemos indicadores de ECO con todos los años apilados
+```{r df_norm_todos , fig.width=18, fig.height=16, out.width="100%"}
 df_norm_todos <- get_dset(purse, dset = "Normalised") |>
   filter(uCode != "ESP") |>
   select(-uCode, -Time) |>
@@ -569,7 +924,9 @@ cor_panel <- cor(df_norm_todos, use = "pairwise.complete.obs")
 ggcorrplot(cor_panel,
            hc.order   = TRUE,
            type       = "lower",
-           tl.cex     = 5,
+           tl.cex     = 8,
+           lab = TRUE,
+           lab_size = 2,
            colors     = c("#d73027", "white", "#4575b4"),
            title      = "Correlaciones - Panel Completo (2016-2024)",
            show.legend = TRUE)
@@ -583,7 +940,7 @@ Alta cohesión interna del conjunto de indicadores, con un predominio de correla
 La presencia de áreas con baja correlación (color blanco) entre diferentes bloques de indicadores confirma que las dimensiones seleccionadas capturan facetas distintas del fenómeno estudiado, garantizando que el índice compuesto sea multidimensional y no esté sesgado por una única tipología de datos. 
 
 
-## PCA 
+## PCA por niveles
 Ahora hacemos el PCA por niveles. Los pesos que obtengamos para cada indicador los guardamos en los metadatos (en iMeta$Weights).
 ```{r pesos_pca_nivel1}
 dimensiones <- iMeta |>
@@ -612,7 +969,7 @@ pesos_pca_L1 <- map_df(dimensiones, function(dim) {
   
   # Diagnóstico: varianza explicada por PC1
   var_pc1 <- pca_dim$sdev[1]^2 / sum(pca_dim$sdev^2)
-  message("Dimensión ", dim, " - Varianza explicada PC1: ", round(var_pc1 * 100, 1), "%")
+  cat("Dimensión ", dim, " - Varianza explicada PC1: ", round(var_pc1 * 100, 1), "% \n")
   
   tibble(
     iCode      = colnames(df_dim),
@@ -650,7 +1007,7 @@ df_scores_dim <- map_df(dimensiones, function(dim) {
 pca_L2 <- prcomp(df_scores_dim, center = TRUE, scale. = TRUE)
 
 var_pc1_L2 <- pca_L2$sdev[1]^2 / sum(pca_L2$sdev^2)
-message("Varianza explicada PC1 nivel dimensiones: ", round(var_pc1_L2 * 100, 1), "%")
+cat("Varianza explicada PC1 nivel dimensiones: ", round(var_pc1_L2 * 100, 1), "% \n")
 
 loadings_L2   <- abs(pca_L2$rotation[, 1])
 pesos_L2_norm <- loadings_L2 / sum(loadings_L2)
@@ -700,15 +1057,15 @@ iMeta_PCA <- iMeta |>
 
 # Verificamos pesos que han salido de las dimensiones 
 
-message(" PESOS DE LAS DIMENSIONES (Nivel 2) ")
+cat(" PESOS DE LAS DIMENSIONES (Nivel 2) \n")
 print(iMeta_PCA |> 
         filter(Level == 2) |> 
         select(iCode, Weight) |>
         arrange(desc(Weight)))
 
-message("\n RESUMEN DE PESOS ")
-message("Suma de pesos dimensiones (debería ser 1): ", 
-        round(sum(iMeta_PCA |> filter(Level == 2) |> pull(Weight)), 4))
+cat("\n RESUMEN DE PESOS \n")
+cat("Suma de pesos dimensiones (debería ser 1): ", 
+        round(sum(iMeta_PCA |> filter(Level == 2) |> pull(Weight)), 4), "\n")
 
 
 # Reconstruimos el purse con los pesos obtenidos y VOLVEMOS A PONER LOS DATOS IMPUTADOS CON MICE EN iDATA !!
@@ -750,10 +1107,10 @@ purse_PCA <- Normalise(
 
 dset_norm <- get_dset(purse_PCA, dset = "Normalised")
 
-message("\n ESTADÍSTICAS DEL DATASET NORMALIZADO ")
-message("Mínimo: ", round(min(dset_norm[, -c(1, 2)], na.rm = TRUE), 2))
-message("Máximo: ", round(max(dset_norm[, -c(1, 2)], na.rm = TRUE), 2))
-message("NAs totales: ", sum(is.na(dset_norm[, -c(1, 2)])))
+cat("\n ESTADÍSTICAS DEL DATASET NORMALIZADO \n")
+cat("Mínimo: ", round(min(dset_norm[, -c(1, 2)], na.rm = TRUE), 2), "\n")
+cat("Máximo: ", round(max(dset_norm[, -c(1, 2)], na.rm = TRUE), 2), "\n")
+cat("NAs totales: ", sum(is.na(dset_norm[, -c(1, 2)])), "\n")
 
 # Guardamos el purse procesado para usarlo después
 print(purse_PCA)
@@ -867,121 +1224,6 @@ for (a in sort(unique(df_ranking_ponderado$Año))) {
 }
 ```
 
-Ejemplos de gráficos que pueden servirnos para meter en el TFG: 
-```{r graficos_tfg_indice_sostenibilidad}
-
-# Creamos df_final_mg a partir del resultado del cálculo anterior
-df_final_mg <- df_ranking_ponderado |>
-  rename(uCode = CCAA, Time = Año, TotalIndex = Score)
-
-# Usamos df_final_mg 
-df_graficos <- df_final_mg |>
-  rename(CCAA = uCode, Año = Time)
-
-# GRÁFICO 1: Evolución del Top 5
-top_5_ultimo_anio <- df_graficos |>
-  filter(Año == max(Año)) |>
-  arrange(desc(TotalIndex)) |>
-  slice_head(n = 5) |>
-  pull(CCAA)
-
-grafico_evolucion_top5 <- df_graficos |>
-  filter(CCAA %in% top_5_ultimo_anio) |>
-  ggplot(aes(x = Año, y = TotalIndex, color = CCAA, group = CCAA)) +
-  geom_line(linewidth = 1.2) +
-  geom_point(size = 3) +
-  scale_color_brewer(palette = "Set1") +
-  labs(
-    title = "Evolución del índice de sostenibilidad turística (2016-2024)",
-    subtitle = "Top 5 CCAA en 2024",
-    x = "Año",
-    y = "Puntuación (escala 1-100)",
-    caption = "Fuente: Elaboración propia con metodología PCA + Media Geométrica Ponderada"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5, color = "gray40"),
-    legend.position = "bottom",
-    panel.grid.minor = element_blank()
-  )
-
-
-# GRÁFICO 2: Heatmap de todas las CCAA por año
-grafico_heatmap <- df_graficos |>
-  mutate(
-    CCAA = factor(CCAA, levels = df_graficos |> 
-                    filter(Año == max(Año)) |> 
-                    arrange(desc(TotalIndex)) |> 
-                    pull(CCAA)),
-    Categoria = case_when(
-      TotalIndex >= 60 ~ "Muy Alto",
-      TotalIndex >= 40 ~ "Alto",
-      TotalIndex >= 25 ~ "Medio",
-      TotalIndex >= 15 ~ "Bajo",
-      TRUE ~ "Muy Bajo"
-    )
-  ) |>
-  ggplot(aes(x = factor(Año), y = CCAA, fill = TotalIndex)) +
-  geom_tile(color = "white", linewidth = 0.3) +
-  scale_fill_gradientn(
-    colors = c("#4575b4", "#91bfdb", "#fee08b", "#fc8d59", "#d73027"),
-    name = "Índice",
-    labels = scales::label_number(suffix = " pts")
-  ) +
-  labs(
-    title = "Mapa de calor: Índice de sostenibilidad por CCAA y año",
-    subtitle = "Colores cálidos = mejor sostenibilidad | Colores fríos = peor sostenibilidad",
-    x = "Año",
-    y = NULL,
-    caption = "Fuente: Elaboración propia (Imputación MICE)"
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5, color = "gray40", size = 10),
-    axis.text.y = element_text(face = "bold"),
-    panel.grid = element_blank(),
-    legend.position = "right"
-  )
-
-# GRÁFICO 3: Boxplot de distribución por año
-grafico_boxplot <- df_graficos |>
-  ggplot(aes(x = factor(Año), y = TotalIndex, fill = factor(Año))) +
-  geom_boxplot(alpha = 0.7, outlier.color = "red", outlier.size = 3) +
-  geom_jitter(width = 0.15, alpha = 0.4, size = 2, color = "black") +
-  scale_fill_brewer(palette = "Blues", guide = "none") +
-  labs(
-    title = "Distribución del Índice de Sostenibilidad por Año",
-    subtitle = "Cada caja muestra la dispersión entre CCAA (25º-75º percentil)",
-    x = "Año",
-    y = "Puntuación del Índice",
-    caption = "Fuente: Elaboración propia | Puntos rojos = outliers"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5, color = "gray40"),
-    axis.text.x = element_text(face = "bold"),
-    panel.grid.minor = element_blank()
-  )
-
-
-# Mostramos gráficos
-print(" GRÁFICO 1: Evolución top 5 ")
-print(grafico_evolucion_top5)
-
-print("\n GRÁFICO 2: Heatmap ")
-print(grafico_heatmap)
-
-print("\n GRÁFICO 3: Boxplot ")
-print(grafico_boxplot)
-
-
-```
-
-
-
 ## CASO 3: Z-SCORE + PCA + MEDIA ARITMÉTICA
 Como el purse lo teníamos construido con normalización min-max, hacemos uno nuevo para normalizar con zscore.
 ```{r purse_zscore_pca}
@@ -1053,6 +1295,7 @@ for (a in sort(unique(df_ranking_zscore$Año))) {
 }
 ```
 
+Problema de los 3 primeros casos: al quedarnos sólo con los pesos de la PC1, si esta explica muy poca información, no conseguimos construir un índice "real".
 
 ## CASO 4: MIN MAX + PCA usando TODAS las componentes principales + media geométrica ponderada por varianza  
 Como lo hacen en el artículo que me pasó Emilio. (https://www.tandfonline.com/doi/full/10.1080/13683500.2019.1579174)
@@ -1287,6 +1530,26 @@ tabla_factores_detalle |>
   )
 ```
 
+ME LO IMPRIMO: 
+```{r}
+library(kableExtra)
+
+# Guardamos la tabla en un objeto
+mi_tabla <- tabla_factores_detalle |>
+  knitr::kable(
+    caption = "Composición de Factores (PCA con Rotación Varimax) - OCDE",
+    digits = 4,
+    col.names = c("Dimensión", "Factor", "Código", "Nombre Indicador", "Peso Final"),
+    format = "html"
+  ) |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = F, font_size = 14)
+
+# La guardamos como un archivo independiente
+save_kable(mi_tabla, file = "tabla_para_imprimir.html")
+```
+
+
 Calculamos el ranking final con el método de la OCDE PCA/FA: 
 ```{r caso5_ranking_ocde, results="asis"}
 # Usamos los identificadores ya filtrados
@@ -1336,8 +1599,8 @@ Al rotar los ejescon Varimax (a aquellos factores cuyos autovalores >1), se logr
 
 Es el caso que mejor captura la realidad multidimensional de la sostenibilidad turística, al evitar que grupos de indicadores similares capten el peso total del índice mediante la agrupación por factores independientes.
 
-# COMPARATIVA RESULTADOS (RANKING)
-## Todos los años
+## COMPARATIVA RESULTADOS (RANKING)
+### Todos los años
 ```{r comparativa_rankings_todos_anios, results="asis"}
 # Unificamos todos los rankings (mismo proceso que antes pero para todo el panel)
 comp_caso1 <- df_rankings |> select(uCode = CCAA, Time = Año, Caso1 = Posicion)
@@ -1375,7 +1638,7 @@ La columna SD_Metodos: un valor bajo indica que la región es estable en esa pos
 -Baleares, muestran desviaciones estándar muy altas. P. ej., en 2024, Baleares pasa del puesto 11 en los casos 1 y 3 al puesto 1 en el caso 2 y al puesto 2 en el caso 4. 
 - Caso 1 y caso 3 son prácticamente iguales en todos los años y regiones, por lo que el método de normalización no influye en nuestro caso. 
 
-## Ejemplo 2022
+### Ejemplo 2022
 Ejemplo de resultados para un año concreto: 2022. (era del que más datos teníamos previamente a la imputación)
 ```{r comparativa_rankings_2022, results="asis"}
 # Unificamos todos los rankings en un solo dataframe
@@ -1436,11 +1699,11 @@ grafico_chupachup_3_lineas <- function(df, anio, casos_elegidos) {
     stop("Selecciona exactamente 3 casos.")
   }
   
-  # Preparar datos y ordenar por el primer caso elegido para que el ranking tenga sentido visual
+  # Preparamos datos 
   df_plot <- df |>
     filter(Time == anio) |>
     select(uCode, all_of(casos_elegidos)) |>
-    arrange(desc(!!sym(casos_elegidos[1]))) |> # Ordenar por el primer caso
+    arrange(desc(!!sym(casos_elegidos[1]))) |> # Ordenamos por el primer caso elegido
     mutate(uCode = factor(uCode, levels = uCode)) |>
     pivot_longer(
       cols = all_of(casos_elegidos), 
@@ -1504,7 +1767,99 @@ grafico_chupachup_3_lineas(
 )
 ```
 
-# TABLA RESULTADOS SCORES 
+### Mapa de puntuaciones por CCAA - Año 2022
+```{r}
+#librerías necesarias para mapas (algunas ya están repetidas pero las dejo por si acaso)
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(giscoR)
+ 3
+ #install.packages("giscoR")
+
+# Mapa oficial CCAA (NUTS2)
+spain_map <- gisco_get_nuts(
+  country = "ES",
+  nuts_level = 2,
+  resolution = "10"
+) |>
+  filter(CNTR_CODE == "ES")
+
+# Correspondencia NUTS2 (los códigos uCode)
+ccaa_match <- data.frame(
+  NUTS_ID = c("ES11","ES12","ES13","ES21","ES22","ES23","ES24",
+              "ES30","ES41","ES42","ES43","ES51","ES52","ES53",
+              "ES61","ES62","ES63","ES64","ES70"),
+  uCode = c("ES-GA","ES-AS","ES-CB","ES-PV","ES-NC","ES-RI","ES-AR",
+            "ES-MD","ES-CL","ES-CM","ES-EX","ES-CT","ES-VC","ES-IB",
+            "ES-AN","ES-MC","ES-CE","ES-ML","ES-CN")
+)
+
+spain_map <- spain_map |>
+  left_join(ccaa_match, by = "NUTS_ID")
+
+# Filtramos el año que queremos
+rankings <- df_maestro_rankings |>
+  filter(Time == 2022)
+
+# Pasamos a formato largo
+rankings_long <- rankings |>
+  pivot_longer(
+    cols = starts_with("Caso"),
+    names_to = "caso",
+    values_to = "ranking"
+  ) |>
+  mutate(caso = case_when(
+    caso == "Caso1" ~ "MinMax + PCA + Aritmética",
+    caso == "Caso2" ~ "MinMax + PCA + Geométrica",
+    caso == "Caso3" ~ "PCA + Z-Score + Geométrica",
+    caso == "Caso4" ~ "STI artículo",
+    caso == "Caso5" ~ "PCA/FA OCDE",
+    TRUE ~ caso
+  ))
+
+# Unimos mapa + datos
+map_data <- spain_map |>
+  left_join(rankings_long, by = "uCode")
+
+map_data_legend <- map_data |> 
+  mutate(ranking_fact=as.factor(ranking))
+
+# Gráfico
+ggplot(map_data_legend) +
+  geom_sf(aes(fill = ranking_fact), color = "white", size = 0.1) +
+  scale_fill_viridis_d(option = "plasma", na.value = "grey90") +
+  facet_wrap(~caso) +
+  labs(
+    title = "Comparación de scores por CCAA (2022)",
+    fill = "Ranking"
+  ) +
+  theme_minimal()
+```
+duda: dónde están Ceuta y Melilla ¿?
+
+Otra forma de poner la leyenda y el gráfico: 
+```{r}
+# Gráfico
+ggplot(map_data_legend) +
+  geom_sf(aes(fill = ranking_fact), color = "white", size = 0.1) +
+  scale_fill_viridis_d(option = "plasma", na.value = "grey90", guide = guide_legend(ncol = 2)) +
+  facet_wrap(~caso) +
+  labs(
+    title = "Comparación de scores por CCAA (2022)",
+    fill = "Posición"
+  ) +
+  theme_minimal() + 
+  theme(
+    axis.text = element_blank(),
+    panel.grid = element_blank(),
+    legend.position = "right", # Puedes probar "bottom" si prefieres
+    legend.key.size = unit(0.3, "cm") # Achicamos un poco los cuadros para que quepan bien
+  )
+```
+
+## TABLA RESULTADOS SCORES 
 Resumimos los scores que nos ha dado cada método. 
 ```{r scores_raw_por_caso, results="asis"}
 
@@ -1553,61 +1908,315 @@ Conclusiones que vemos de estos resultados:
 - en 2023 y 2024 los valores suben mucho con respecto a otros años. 
 
 
-## Mapa de puntuaciones por CCAA - Año 2022
+
+
+
+# REUNIONES VICTOR
+
+## Estudiamos NAs
+Uso iData_clean que es en el que ya hemos eliminado los indicadores que sólo tenían datos para Canarias o directamente nada. 
+Con paquete naniar.
 ```{r}
-#librerías necesarias para mapas (algunas ya están repetidas pero las dejo por si acaso)
-library(sf)
+# % NAs por región
+gg_miss_fct(x = iData_clean, fct = uCode) +
+  labs(title = "Distribución de datos faltantes por CCAA",
+       x = "Indicadores", y = "Comunidades Autónomas")
+
+# % NAs por año
+gg_miss_fct(x = iData_clean, fct = Time) +
+  labs(title = "Distribución de datos faltantes por año",
+       x = "Evolución temporal", y = "Indicadores")
+
+# resumen por variable
+# Gráfico de barras ordenado de más a menos NAs
+gg_miss_var(iData_clean) + 
+  labs(title = "NAs por indicador")
+```
+
+
+## Gráficos para TODOS los casos
+```{r funcion_maestra_graficos}
 library(ggplot2)
 library(dplyr)
 library(tidyr)
-library(giscoR)
 
-# Mapa oficial CCAA (NUTS2)
-spain_map <- gisco_get_nuts(
-  country = "ES",
-  nuts_level = 2,
-  resolution = "10"
-) |>
-  filter(CNTR_CODE == "ES")
+generar_graficos_por_caso <- function(df_caso, nombre_metodo) {
+  
+  # 1. Preparar datos para ggplot (Estandarizamos nombres de columnas)
+  # Buscamos la columna que no sea uCode ni Time para que sea nuestro "Index"
+  df_plot <- df_caso |>
+    rename(CCAA = uCode, Año = Time) |>
+    pivot_longer(cols = -c(CCAA, Año), names_to = "Metodo", values_to = "TotalIndex")
 
-# Correspondencia NUTS2 (los códigos uCode)
-ccaa_match <- data.frame(
-  NUTS_ID = c("ES11","ES12","ES13","ES21","ES22","ES23","ES24",
-              "ES30","ES41","ES42","ES43","ES51","ES52","ES53",
-              "ES61","ES62","ES63","ES64","ES70"),
-  uCode = c("ES-GA","ES-AS","ES-CB","ES-PV","ES-NC","ES-RI","ES-AR",
-            "ES-MD","ES-CL","ES-CM","ES-EX","ES-CT","ES-VC","ES-IB",
-            "ES-AN","ES-MC","ES-CE","ES-ML","ES-CN")
+  # --- GRÁFICO 1: Evolución del Top 5 ---
+  top_5_ultimo_anio <- df_plot |>
+    filter(Año == max(Año)) |>
+    arrange(desc(TotalIndex)) |>
+    slice_head(n = 5) |>
+    pull(CCAA)
+
+  g1 <- df_plot |>
+    filter(CCAA %in% top_5_ultimo_anio) |>
+    ggplot(aes(x = Año, y = TotalIndex, color = CCAA, group = CCAA)) +
+    geom_line(linewidth = 1.2) +
+    geom_point(size = 3) +
+    scale_color_brewer(palette = "Set1") +
+    labs(
+      title = paste("Evolución Top 5 -", nombre_metodo),
+      subtitle = "CCAA con mejor desempeño en el último año",
+      x = "Año", y = "Puntuación (0-100)"
+    ) +
+    theme_minimal() +
+    theme(legend.position = "bottom", plot.title = element_text(face = "bold"))
+
+  # --- GRÁFICO 2: Heatmap de todas las CCAA ---
+  g2 <- df_plot |>
+    mutate(CCAA = factor(CCAA, levels = df_plot |> 
+                            filter(Año == max(Año)) |> 
+                            arrange(desc(TotalIndex)) |> pull(CCAA))) |>
+    ggplot(aes(x = factor(Año), y = CCAA, fill = TotalIndex)) +
+    geom_tile(color = "white") +
+    scale_fill_gradientn(colors = c("#4575b4", "#91bfdb", "#fee08b", "#fc8d59", "#d73027"), name = "Pts") +
+    labs(
+      title = paste("Mapa de Calor -", nombre_metodo),
+      subtitle = "Distribución de scores por año y región",
+      x = "Año", y = NULL
+    ) +
+    theme_minimal() +
+    theme(axis.text.y = element_text(size = 8, face = "bold"))
+
+  # --- GRÁFICO 3: Boxplot de dispersión ---
+  g3 <- df_plot |>
+    ggplot(aes(x = factor(Año), y = TotalIndex, fill = factor(Año))) +
+    geom_boxplot(alpha = 0.7, outlier.color = "red") +
+    geom_jitter(width = 0.15, alpha = 0.3, size = 1.5) +
+    scale_fill_brewer(palette = "Blues", guide = "none") +
+    labs(
+      title = paste("Dispersión Anual -", nombre_metodo),
+      subtitle = "Variabilidad entre regiones",
+      x = "Año", y = "Score"
+    ) +
+    theme_minimal()
+
+  # Imprimimos los gráficos
+  print(g1)
+  print(g2)
+  print(g3)
+}
+```
+
+
+```{r generar_todos_los_graficos, results="asis", fig.height=6, fig.width=9}
+
+# Creamos una lista con los dataframes de scores que ya tenemos
+lista_casos <- list(
+  "Caso 1: Media Aritmética (Min-Max)" = scores_caso1,
+  "Caso 2: Media Geométrica (Min-Max)" = scores_caso2,
+  "Caso 3: Media Aritmética (Z-Score)" = scores_caso3,
+  "Caso 4: Media Geométrica Ponderada" = scores_caso4,
+  "Caso 5: Metodología OCDE (Factor Analysis)" = scores_caso5
 )
 
-spain_map <- spain_map |>
-  left_join(ccaa_match, by = "NUTS_ID")
+# Bucle que recorre la lista
+for (i in seq_along(lista_casos)) {
+  
+  nombre <- names(lista_casos)[i]
+  datos <- lista_casos[[i]]
+  
+  cat("\n\n## Análisis Visual:", nombre, "\n")
+  
+  # Llamamos a la función
+  generar_graficos_por_caso(datos, nombre)
+  
+  cat("\n---\n")
+}
+```
 
-# Filtramos el año que queremos
-scores <- df_scores_raw |>
-  filter(Time == 2022)
+## Tabla outliers 
+Está en el apartado: "# Tratamos outliers" de arriba.
+```{r diagnose_outliers}
+if(!require(dlookr)) install.packages("dlookr")
+library(dlookr)
+diagnose(iData_clean)
+```
 
-# Pasamos a formato largo
-scores_long <- scores |>
-  pivot_longer(
-    cols = starts_with("Caso"),
-    names_to = "caso",
-    values_to = "score"
+
+
+## clustering para hacer grupos según correlaciones
+```{r}
+cor_matrix_total <- cor(df_norm_todos, use = "pairwise.complete.obs")
+
+# 1. iclust global — deja que él proponga los bloques
+resultado_global <- iclust(cor_matrix_total)
+plot(resultado_global)  # dendrograma con bloques
+
+# 2. Si queremos forzar el número de clusters (ej. 6 en total entre las 3 dimensiones)
+resultado_global <- iclust(cor_matrix_total, nclusters = 6)
+
+# 3. Visualización de la matriz reordenada por clusters
+library(corrplot)
+corrplot(cor_matrix_total, order = "hclust", addrect = 6)
+```
+
+Si forzamos clusters en dimension ECO = 6, se juntan RC1 con RC6? Eran las que nos separaban los hoteles de 3 estrellas y no nos cuadraba mucho. 
+```{r}
+df_eco <- df_norm_todos |> 
+  select(starts_with("IECO"))
+
+cor_matrix_eco <- cor(df_eco, use="pairwise.complete.obs")
+
+dist_matrix <- as.dist(1 - cor_matrix_eco)
+hclust_panel <- hclust(dist_matrix, method = "ward.D2")
+
+# Dendrograma
+plot(hclust_panel, main = "Dendrograma Dimensión ECO", sub = "", xlab = "")
+
+k_ind <- 5
+rect.hclust(hclust_panel, k = k_ind, border = "orange")
+
+# Extraemos la lista de indicadores por cluster
+clusters_panel <- cutree(hclust_panel, k = k_ind)
+
+df_clusters_panel <- tibble(
+  iCode   = names(clusters_panel),
+  Cluster = factor(clusters_panel)
+) |>
+  # Unimos con iMeta para ver a qué dimensión pertenecen originalmente
+  left_join(iMeta |> select(iCode, iName, Parent), by = "iCode")
+
+# Resultado ordenado por Cluster
+print(df_clusters_panel |> arrange(Cluster), n = 100)
+```
+
+Forzando 6 clusters (k=6) NO se juntan RC1 y RC6, se juntan RC3 (variación tarifas) y RC7 (variación + IPC). 
+
+Forzando 5 clusters (k=5) SÍ se juntan RC1 y RC6. Entonces se quedan separados hoteles de 3 y 4 estrellas vs hoteles de 5 estrellas. 
+
+
+## Análisis correlaciones por año
+Sólo lo teníamos para 2022. 
+Lo tenemos en el apartado # Correlaciones por año.
+
+Da problema el 2020 (Covid?). 
+
+
+## Análisis profundo de NAs
+```{r}
+# Cargar librerías necesarias
+library(naniar)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(knitr)
+
+# Extraemos los datos crudos originales
+df_numeric <- iData_clean |> select(-uCode, -Time)
+
+cat("### Análisis Visual de Patrones de NAs\n")
+
+# 1. Gráfico general de porcentaje de faltantes por indicador (los peores primero)
+gg_miss_var(df_numeric, show_pct = TRUE) +
+  theme_minimal() +
+  labs(title = "Porcentaje de valores faltantes por Indicador",
+       y = "% de NAs", x = "Indicador")
+
+# 2. Gráfico UpSet (Intersecciones de NAs)
+# Muestra qué indicadores tienen NAs simultáneamente en las mismas filas
+cat("\n\n**Gráfico UpSet de Co-ocurrencia:** Las barras superiores indican cuántas filas comparten exactamente el mismo patrón de faltantes marcado por los puntos inferiores.\n\n")
+
+gg_miss_upset(df_numeric, 
+              nsets = 10, # Muestra los 10 indicadores con más NAs
+              nintersects = 10,
+              text.scale = 1.2)
+```
+
+```{r}
+cat("### Clasificación de Indicadores según Volumen de NAs\n")
+
+# Clasificamos según umbrales de calidad metodológica
+tabla_clasificacion <- miss_var_summary(df_numeric) |>
+  mutate(
+    Clasificacion = case_when(
+      pct_miss == 0 ~ "0. Completos (0%)",
+      pct_miss > 0 & pct_miss <= 5 ~ "1. Alta Calidad (< 5%)",
+      pct_miss > 5 & pct_miss <= 15 ~ "2. Moderados (5% - 15%)",
+      pct_miss > 15 & pct_miss <= 30 ~ "3. Severos (15% - 30%)",
+      pct_miss > 30 ~ "4. Críticos (> 30%) - Candidatos a descarte"
+    )
   )
 
-# Unimos mapa + datos
-map_data <- spain_map |>
-  left_join(scores_long, by = "uCode")
+# Resumen de cuántos indicadores hay en cada grupo
+resumen_grupos <- tabla_clasificacion |>
+  group_by(Clasificacion) |>
+  summarise(`Número de Indicadores` = n()) |>
+  arrange(Clasificacion)
 
-# Gráfico
-ggplot(map_data) +
-  geom_sf(aes(fill = score), color = "white") +
-  scale_fill_viridis_c(option = "plasma", na.value = "grey90") +
-  facet_wrap(~caso) +
-  labs(
-    title = "Comparación de scores por CCAA (2022)",
-    fill = "Score"
-  ) +
-  theme_minimal()
+print(kable(resumen_grupos, caption = "Distribución de indicadores según severidad de NAs"))
+
+# Detalle de los problemáticos (Grupos 3 y 4)
+problematicos <- tabla_clasificacion |>
+  filter(Clasificacion %in% c("3. Severos (15% - 30%)", "4. Críticos (> 30%)")) |>
+  left_join(iMeta |> select(iCode, iName), by = c("variable" = "iCode")) |>
+  select(Indicador = variable, Nombre = iName, `% Faltante` = pct_miss, Grupo = Clasificacion)
+
+if(nrow(problematicos) > 0) {
+  cat("\n**Detalle de indicadores críticos y severos:**\n")
+  print(kable(problematicos, digits = 1, caption = "Indicadores que requieren revisión metodológica profunda o descarte."))
+}
 ```
-duda: dónde están Ceuta y Melilla ¿?
+
+```{r}
+cat("### Distribución Espacio-Temporal de los Datos Faltantes\n")
+
+# Calculamos el % de NAs por cada cruce de CCAA y Año
+na_heatmap_data <- df_raw |>
+  group_by(uCode, Time) |>
+  # Calculamos cuántos NAs hay en esa fila y lo dividimos por el total de columnas numéricas
+  summarise(
+    Total_Cols = ncol(df_raw) - 2,
+    NAs_Fila = sum(is.na(cur_data())),
+    Pct_NA = (NAs_Fila / Total_Cols) * 100,
+    .groups = "drop"
+  )
+
+# Dibujamos un heatmap
+ggplot(na_heatmap_data, aes(x = factor(Time), y = uCode, fill = Pct_NA)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "#e0f3db", high = "#e34a33", name = "% NAs") +
+  theme_minimal() +
+  labs(
+    title = "Concentración de NAs por Región y Año",
+    subtitle = "Zonas rojas indican alta concentración de datos faltantes (justificación para exclusión)",
+    x = "Año",
+    y = "Comunidad Autónoma"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+library(dplyr)
+library(corrplot)
+library(tidyr)
+
+# 1. Creamos una matriz binaria: 1 si es NA, 0 si hay dato
+df_numeric <- iData_clean |> 
+  select(-uCode, -Time)
+
+matriz_nas <- as.data.frame(is.na(df_numeric)) * 1
+
+# 2. Calculamos la correlación entre las columnas de NAs
+# Solo incluimos indicadores que tengan al menos un NA (si no, la correlación falla)
+indicadores_con_na <- names(which(colSums(matriz_nas) > 0))
+cor_nas <- cor(matriz_nas[, indicadores_con_na])
+
+# 3. Visualizamos con corrplot
+# Los cuadrados azules oscuros intensos indican bloques que siempre faltan juntos
+cat("### Matriz de Co-dependencia de NAs\n")
+corrplot(cor_nas, 
+         method = "color", 
+         order = "hclust", # Agrupa indicadores con patrones de NA similares
+         tl.cex = 0.7, 
+         title = "Indicadores que comparten los mismos huecos",
+         mar = c(0,0,1,0))
+```
+

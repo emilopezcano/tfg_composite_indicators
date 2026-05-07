@@ -1378,7 +1378,7 @@ La columna SD_Metodos mide la volatilidad: un valor bajo indica que la región e
 - Caso 1 y caso 3 son prácticamente iguales en todos los años y regiones, por lo que el método de normalización no influye en nuestro caso. 
 
 ## Ejemplo 2022
-Ejemplo de resultados para 2022
+Ejemplo de resultados para un año concreto: 2022. (era del que más datos teníamos previamente a la imputación)
 ```{r comparativa_rankings_2022, results="asis"}
 # Unificamos todos los rankings en un solo dataframe
 # Extraemos solo uCode, Time y la Posición de cada caso
@@ -1554,3 +1554,124 @@ Conclusiones que vemos de estos resultados:
 - caso 5: bastante alineado con caso 1, mantienen patrones similares, pero con valores algo más altos. 
 - patrones globales: aparecen casi siempre arriba: PV, RI, NC, AR. Regiones que suelen aparecer abajo: CN, CE y MC (en algunos años)
 - en 2023 y 2024 los valores suben mucho con respecto a otros años. 
+
+# Análisis consistencia 
+```{r consistencia_interna_dimensiones, warning=FALSE}
+# Cargamos librerías necesarias
+library(psych)
+library(performance)
+library(purrr)
+library(dplyr)
+
+# 1. Definimos la función de análisis
+analizar_consistencia <- function(dim_name, df_datos, iMeta_ref) {
+  
+  cat("\n======================================================\n")
+  cat(" DIMENSIÓN:", dim_name, "\n")
+  cat("======================================================\n")
+  
+  # Seleccionamos los códigos de los indicadores de esta dimensión desde iMeta
+  inds_dim <- iMeta_ref |> 
+    filter(Level == 1, Parent == dim_name) |> 
+    pull(iCode)
+  
+  # Filtramos la base de datos para quedarnos solo con esos indicadores numéricos
+  df_wide <- df_datos |> 
+    select(any_of(inds_dim)) |> 
+    select(where(is.numeric))
+  
+  # --- Test de Adecuación (Bartlett & KMO) ---
+  cat("\n--- Test de Adecuación (Bartlett & KMO) ---\n")
+  # Metodología Lüdecke et al. (2021)
+  adecuacion <- check_factorstructure(df_wide)
+  print(adecuacion)
+  
+  # --- Consistencia Interna (Alpha de Cronbach) ---
+  cat("\n--- Consistencia Interna (Alpha de Cronbach) ---\n")
+  # Mantenemos check.keys = TRUE por seguridad, pero atentos a los avisos de la consola
+  alpha_res <- psych::alpha(df_wide, check.keys = TRUE, warnings = FALSE)
+  
+  # Extraemos Alpha Bruto y Estandarizado
+  raw_a <- round(alpha_res$total$raw_alpha, 3)
+  std_a <- round(alpha_res$total$std.alpha, 3)
+  
+  cat("Alpha Bruto (Raw):         ", raw_a, "\n")
+  cat("Alpha Estandarizado (Std): ", std_a, "\n")
+  
+  # Diagnóstico automático para facilitar la redacción del TFG
+  if(std_a >= 0.7) {
+    cat("Diagnóstico: Consistencia aceptable/buena (>= 0.7)\n")
+  } else if(std_a >= 0.6) {
+    cat("Diagnóstico: Consistencia cuestionable pero aceptable en fases exploratorias (0.6 - 0.7)\n")
+  } else {
+    cat("Diagnóstico: Consistencia pobre (< 0.6). Considerar revisar la agrupación.\n")
+  }
+  cat("\n")
+}
+
+# 2. Definimos las dimensiones a analizar
+dimensiones_stl <- c("ECO", "SOC", "ENV")
+
+# 3. Ejecutamos la función iterativamente
+# NOTA: Asegúrate de que 'df_norm_todos' es el nombre de tu dataframe con los datos normalizados y sin la CCAA de España
+walk(dimensiones_stl, ~analizar_consistencia(.x, df_norm_todos, iMeta))
+```
+
+# Análisis consistencia por año
+```{r tabla_consistencia_metodologica}
+library(psych)
+library(dplyr)
+library(purrr)
+library(knitr)
+library(kableExtra)
+
+# 1. Definimos la función para extraer métricas de una dimensión
+obtener_metricas_tabla <- function(dim_name, df_datos, iMeta_ref) {
+  
+  # Seleccionamos indicadores de la dimensión
+  inds_dim <- iMeta_ref |> 
+    filter(Level == 1, Parent == dim_name) |> 
+    pull(iCode)
+  
+  df_wide <- df_datos |> 
+    select(any_of(inds_dim)) |> 
+    select(where(is.numeric))
+  
+  # A. Alpha de Cronbach
+  alpha_res <- psych::alpha(df_wide, check.keys = TRUE, warnings = FALSE)
+  cronbach <- alpha_res$total$std.alpha
+  
+  # B. KMO (Kaiser-Meyer-Olkin)
+  kmo_res <- psych::KMO(df_wide)
+  kmo_val <- kmo_res$MSAi # MSA global
+  
+  # C. Varianza explicada (PCA - 1er Componente)
+  pca_res <- prcomp(df_wide, scale. = TRUE)
+  var_explicada <- (pca_res$sdev^2 / sum(pca_res$sdev^2))[1] # Proporción PC1
+  
+  # Retornamos una fila de la tabla
+  tibble(
+    Dimensión = dim_name,
+    `Nº Indicadores` = ncol(df_wide),
+    `Alpha de Cronbach` = round(cronbach, 3),
+    `KMO` = round(kmo_val, 3),
+    `Varianza PC1 (%)` = paste0(round(var_explicada * 100, 1), "%")
+  )
+}
+
+# 2. Ejecutamos para tus 3 dimensiones
+dimensiones_stl <- c("ECO", "SOC", "ENV")
+
+tabla_resumen <- map_df(dimensiones_stl, ~obtener_metricas_tabla(.x, df_norm_todos, iMeta))
+
+# 3. Formateamos la tabla para que quede profesional (estilo TFG)
+tabla_resumen |>
+  kable(caption = "Análisis de Consistencia Interna y Estructura Factorial por Dimensión",
+        align = "lcccc") |>
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = F, 
+                position = "center") |>
+  add_header_above(c(" " = 2, "Fiabilidad" = 1, "Adecuación" = 1, "Estructura" = 1)) |>
+  footnote(general = "Umbrales recomendados: Cronbach > 0.7, KMO > 0.5. Datos normalizados.")
+```
+

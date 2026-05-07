@@ -13,15 +13,15 @@ dfvar <- get_ft_data(
     pull(variable_id),
   country = "ES",
   # .source_id = "EVASTUR",
-  from_date = "2011-01-01",
-  to_date = "2025-12-31"
+  from_date = "2016-01-01",
+  to_date = "2024-12-31"
 ) |>
   mutate(variable_value_flags = as.character(variable_value_flags))
 
 # Calculamos las agregaciones de provincias a comunidades autónomas y año (en otro script)
 source("R/gen_data_local_prov.R")
 # las unimos
-dfvar <- bind_rows(dfvar, dfvar_prov)
+dfvar <- bind_rows(dfvar, df_aggregated_geo) #creo que esto debe ser así, en vez de dfvar_prov
 
 # Calculamos VTRA0009 = VTRA0006+VTRA0008
 
@@ -39,8 +39,7 @@ df_vtra0009 <- dfvar |>
 ## Lo añadimnos a dfvar
 dfvar <- bind_rows(dfvar, df_vtra0009)
 
-dfvar$imputed[dfvar$variable_value_flags == "{I}"] <- TRUE
-dfvar$variable_value[dfvar$imputed] <- NA
+dfvar$variable_value[dfvar$variable_value == "NaN"] <- NA
 
 dfinds <- dfvar |>
   distinct(variable_id) |>
