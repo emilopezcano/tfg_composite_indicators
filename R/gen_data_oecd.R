@@ -56,3 +56,14 @@ oecd_data <- df_indicadores_completo |>
   inner_join(df_groups, by = c("geo_id")) 
   
 summary(oecd_data$indicator_value)
+
+
+## grupos de países
+tbl(con2, "dt_geo") |> 
+  filter(nuts_level == 101)
+
+##países del grupo
+
+tbl(con2, "bt_geo_group") |> 
+  filter(geo_group_id == "OECD") |> 
+  collect()
