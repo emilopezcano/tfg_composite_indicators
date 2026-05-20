@@ -40,7 +40,7 @@ indicators_meta_final <- readRDS("../data/indicators.rds")
 df_indicadores_completo_final <- readRDS("../data/df_indicadores_completo.rds")
 
 regiones_a_analizar <- c("ES-AN","ES-CT","ES-MD","ES-VC") 
-quito_anios <- c(2016,2017,2018,2025)
+quito_anios <- c(2016,2017,2018,2020, 2025)
 # Renombramos la columna valor, eliminamos la source_id que es la misma para todos y no aporta nada, quito 2025 (faltan datos de muchos indicadores)
 indicadores_calculados_final <- indicadores_calculados_final |> 
   rename(value = indicator_value) |> 
@@ -133,12 +133,7 @@ nombres_problematicos <- indicadores_con_problemas |>
 print("Indicadores a revisar:")
 print(nombres_problematicos)
 ```
-INCLUYENDO 2020: nos dan problema 11 en total
- [1] "IAMB0003" "IAMB0005" "IECO0012" "IECO0013" "ISOC0004" "IAMB0002" "IAMB0006"
- [8] "IAMB0007" "IECO0001" "IECO0002" "IECO0005"
- 
-EXCLUYENDO 2020: [1] nos dan problema 5 en total (pero donde está IAMB0004? tambien habría que eliminarlo pq no tiene datos)
-[1] "IAMB0003" "IAMB0005" "IECO0012" "IECO0013" "ISOC0004"
+
  
 # Disponibilidad de datos por indicador
 ```{r disponibilidad de datos por indicador}
@@ -165,21 +160,6 @@ print(paste("Indicadores eliminados por baja disponibilidad:", length(eliminados
 print(eliminados)
 ```
 
-
-# Eliminamos indicadores con baja disponibilidad
-Eliminamos ahora los indicadores con baja disponibilidad
-```{r eliminar_indicadores}
-# Indicadores a eliminar (baja disponibilidad, pero mantengo 4 ambientales porque si no me quedo sin la dimensión ENV)
-indicadores_eliminar <- c("IAMB0004", "IAMB0005", "IAMB0003", "IECO0012", "IECO0013", "ISOC0004")
-
-# Filtramos iData eliminando esos indicadores
-iData_clean <- iData |>
-  select(-any_of(indicadores_eliminar)) |> 
-  filter(uCode != "ESP")
-
-# Verificación
-print(paste("Indicadores restantes:", ncol(iData_clean) - 2)) # -2 por uCode y Time
-```
 
 # iMeta
 Es el df de los metadatos, lo más importante es que contiene los códigos con los nombres completos y los pesos!!
@@ -255,12 +235,7 @@ purse
 ```
 
 # Imputacion MICE
-Estuve trabajando con imputación por la mediana, pero me daba demasiados errores, no se cubría casi ningún NA porque no teníamos suficientes datos. Con MICE se nos cubren TODOS los NA excepto los del indicador individual IAMB0007. 
 
-Cómo funciona MICE: 
-"El paquete mice nos ayuda a imputar valores faltantes con valores de datos plausibles. Estos valores plausibles se extraen de una distribución diseñada específicamente para cada punto de datos faltante.
-
-La imputación múltiple es un método que aborda el problema de los valores faltantes en los conjuntos de datos al generar múltiples conjuntos de datos completos, cada uno con valores imputados de manera diferente. Luego, los resultados se combinan para obtener estimaciones finales y varianzas que reflejen la incertidumbre de la imputación."
 
 ```{r imputacion_mice}
 # 1. Preparamos datos numéricos
@@ -304,27 +279,6 @@ purse <- new_coin(
 for(i in seq_along(purse$coin)){
   purse$coin[[i]]$Data$Imputed <- purse$coin[[i]]$Data$Raw
 }
-```
-
-Ejemplo gráfico distribución indicador IECO0033 por año.
-```{r grafico_densidad_ieco0033}
-# Sacamos los datos limpios de todo el panel
-df_imputed <- get_dset(purse, dset = "Imputed")
-
-# Elegimos el indicador que queremos "investigar" (ej. IECO0033)
-df_imputed |>
-  select(uCode, Time, IECO0033) |>
-  # Hacemos un diagrama de densidad (como un histograma suavizado) para ver la "cola"
-  ggplot(aes(x = IECO0033, fill = as.factor(Time))) +
-  geom_density(alpha = 0.4) + # Alpha le da transparencia para ver los años superpuestos
-  theme_minimal() +
-  labs(
-    title = "Distribución del indicador IECO0033 (Todos los años)",
-    subtitle = "Viendo la asimetría y los valores extremos",
-    x = "Valor del indicador",
-    y = "Densidad",
-    fill = "Año"
-  )
 ```
 
 # Tratamos outliers
@@ -441,6 +395,25 @@ purse <- Normalise(
   f_n_para     = list(l_u = c(1, 100))
 )
 ```
+
+```{r}
+# ── Exportar datos normalizados para animación PCA ──────────────────────────
+df_norm <- get_dset(purse, dset = "Normalised")
+
+# Separamos identificadores y valores
+df_export <- df_norm |>
+  select(-uCode, -Time) |>          # solo los 52 indicadores normalizados
+  na.omit()                          # quitamos las 4 filas con NA residual (IAMB0007)
+
+write.csv(df_export, "datos_normalizados_pca.csv", row.names = FALSE)
+
+# Opcional: exportar también con identificadores para referencia
+write.csv(df_norm, "datos_normalizados_completo.csv", row.names = FALSE)
+
+cat("Filas exportadas:", nrow(df_export), "\n")
+cat("Columnas (indicadores):", ncol(df_export), "\n")
+```
+
 
 # ANÁLISIS MULTIVARIANTE
 
@@ -690,6 +663,27 @@ ECO: colinealidad casi perfecta (recordar que tenemos 92 pares de indicadores co
 SOC: matemáticamente el PCA es posible, pero "miserable" según la escala de Kaiser. Significa que los indicadores sociales están relacionados, pero de forma débil o con mucho "ruido". No hay una estructura subyacente única que los una a todos con fuerza. Podemos usar PCA si queremos automatizar los pesos, pero hay que avisar que la estructura es débil. 
 
 AMB: hay estructura suficiente para justificar un PCA. 
+
+```{r}
+# Componentes retenidos por dimensión (criterio Kaiser: eigenvalue > 1)
+map(c("ECO", "SOC", "ENV"), function(d) {
+  inds_d <- iMeta |> filter(Level == 1, Parent == d) |> pull(iCode)
+  df_d   <- df_norm_todos |>
+    select(any_of(inds_d)) |>
+    select(where(\(x) var(x, na.rm = TRUE) > 1e-10))
+  
+  pca_d      <- prcomp(df_d, center = TRUE, scale. = TRUE)
+  eigenvalues <- pca_d$sdev^2
+  n_retenidos <- sum(eigenvalues > 1)
+  var_acum    <- cumsum(eigenvalues / sum(eigenvalues)) * 100
+  
+  cat("\n--- DIMENSIÓN:", d, "---\n")
+  cat("Eigenvalues:", round(eigenvalues, 3), "\n")
+  cat("Componentes retenidos (eigenvalue > 1):", n_retenidos, "\n")
+  cat("Varianza acumulada con", n_retenidos, "componentes:", 
+      round(var_acum[n_retenidos], 1), "%\n")
+})
+```
 
 
 ## PCA y clustering para todo el panel
@@ -1101,6 +1095,76 @@ tabla_factores_detalle |>
     format = "html"
   )
 ```
+```{r}
+# Agregación con pesos OCDE-Varimax y cálculo del índice final
+df_norm_ids <- get_dset(purse, dset = "Normalised") |>
+  filter(uCode != "ESP") |>
+  select(uCode, Time)
+
+df_norm_vals <- get_dset(purse, dset = "Normalised") |>
+  filter(uCode != "ESP") |>
+  select(-uCode, -Time) |>
+  mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x)))
+
+# Índice por dimensión
+df_dims_score <- map_dfc(c("ECO", "SOC", "ENV"), function(d) {
+  pesos_d <- pesos_ocde_L1 |> filter(Dimension == d)
+  pesos_v <- setNames(pesos_d$Weight_OCDE, pesos_d$iCode)
+  mat_d   <- df_norm_vals |> select(any_of(names(pesos_v))) |> as.matrix()
+  mat_d   <- mat_d[, names(pesos_v)]
+  tibble(!!d := as.vector(mat_d %*% pesos_v))
+})
+
+# Índice global = media simple de las 3 dimensiones (peso igual entre dimensiones)
+df_resultado_final <- df_norm_ids |>
+  bind_cols(df_dims_score) |>
+  mutate(Score_Global = (ECO + SOC + ENV) / 3) |>
+  rename(CCAA = uCode, Año = Time)
+
+# Tabla resultado
+df_resultado_final |>
+  arrange(Año, desc(Score_Global)) |>
+  knitr::kable(
+    digits = 3,
+    caption = "Índice Sintético de Turismo Sostenible — por dimensión y global",
+    col.names = c("CCAA", "Año", "ECO", "SOC", "ENV", "Índice Global")
+  )
+```
+
+
+# Índice por dimensiones
+```{r}
+# Índice por dimensiones y global
+df_norm_ids <- get_dset(purse, dset = "Normalised") |>
+  filter(uCode != "ESP") |>
+  select(uCode, Time)
+
+df_norm_vals <- get_dset(purse, dset = "Normalised") |>
+  filter(uCode != "ESP") |>
+  select(-uCode, -Time) |>
+  mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x)))
+
+df_dims_score <- map_dfc(c("ECO", "SOC", "ENV"), function(d) {
+  pesos_d <- pesos_ocde_L1 |> filter(Dimension == d)
+  inds_d  <- pesos_d$iCode
+  pesos_v <- pesos_d$Weight_OCDE
+  names(pesos_v) <- inds_d
+  mat_d <- df_norm_vals |> select(any_of(names(pesos_v))) |> as.matrix()
+  mat_d <- mat_d[, names(pesos_v)]
+  tibble(!!d := as.vector(mat_d %*% pesos_v))
+})
+
+df_resultado_final <- df_norm_ids |>
+  bind_cols(df_dims_score) |>
+  mutate(Score_Global = (ECO + SOC + ENV) / 3) |>
+  rename(CCAA = uCode, Año = Time)
+
+# Tabla resumen
+df_resultado_final |>
+  arrange(Año, desc(Score_Global)) |>
+  knitr::kable(digits = 3, caption = "Índice por dimensiones y global")
+```
+
 
 
 

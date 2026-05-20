@@ -1,0 +1,151 @@
+---
+title: "oecd"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 4
+editor: source
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+Cargamos las librerías necesarias.
+```{r librerias, message=FALSE, warning=FALSE}
+library(COINr)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(lubridate)
+library(ggplot2)
+library(stringr)
+library(mice)
+library(scales)
+library(knitr)
+library(psych)
+library(purrr)
+library(ggcorrplot)
+library(naniar)
+library(VIM)
+library(performance)
+```
+
+Cargamos los datos y los retocamos para que nos cuadre con la estructura que necesita COINr.
+```{r retocamos nuestro df para cumplir los requerimientos de COINr}
+# Cargamos los 3 dfs: el de los valores, el de los metadatos y el df completo.
+indicadores_calculados_oecd <- readRDS("../data/cindicators_oecd.rds")
+indicators_oecd_meta_final <- readRDS("../data/indicators_oecd.rds")
+df_indicadores_completo_oecd <- readRDS("../data/df_indicadores_completo_oecd.rds")
+
+# Renombramos la columna valor, eliminamos la source_id que es la misma para todos y no aporta nada, quito 2025 (faltan datos de muchos indicadores)
+indicadores_calculados_oecd <- indicadores_calculados_oecd |> 
+  rename(value = indicator_value) |> 
+  select(-source_id) |> 
+  # Creamos el año y filtramos para quitar 2025
+  mutate(Year = year(as.Date(date)))
+
+# Verificamos cuántos indicadores tenemos en total
+indicadores_activos <- indicadores_calculados_oecd |> 
+  pull(indicator_id) |> 
+  unique() 
+
+cat("Indicadores detectados:", length(indicadores_activos), "\n")
+```
+
+# iData
+Es el df que tiene por columnas: uCode (que es nuestro código de cada región), Time (que son nuestros años) y todos los indicadores individuales. 
+Por tanto, las filas son los valores que corresponden a cada región en cada año.
+```{r nuestro iData}
+# Transformamos a formato ancho
+iData <- indicadores_calculados_oecd |>
+  mutate(Time = year(as.Date(date))) |>
+  filter(total != TRUE) |>
+  select(uCode = geo_id, Time, indicator_id, value) |> 
+  pivot_wider(names_from = indicator_id, values_from = value)
+
+# Paso los NaN a NA para tenerlo todo igual
+#iData[do.call(cbind, lapply(iData, is.nan))] <- NA # se supone que lo he gestionado ya en el gen_data_local
+
+head(iData)
+```
+
+```{r}
+#| label: filtro-comparabilidad
+
+# Identificamos indicadores que tienen datos para España Y para alguien más
+indicadores_compartidos <- iData |>
+  summarise(across(-c(uCode, Time), 
+                   ~ any(!is.na(.x[uCode == "ESP"])) & any(!is.na(.x[uCode != "ESP"])))) |>
+  pivot_longer(everything(), names_to = "indicador", values_to = "compartido") |>
+  filter(compartido == TRUE) |>
+  pull(indicador)
+
+# Sobreescribimos el iData filtrando las columnas
+iData <- iData |> 
+  select(uCode, Time, all_of(indicadores_compartidos))
+
+# Mensaje de confirmación en la consola
+cat("Se han mantenido", length(indicadores_compartidos), "indicadores compartidos entre España y EU28.")
+
+# 3. Creamos la tabla de nombres para saber con qué nos hemos quedado
+# Cruzamos los códigos que han quedado con sus nombres reales
+tabla_indicadores_finales <- indicators_oecd_meta_final |>
+  filter(indicator_id %in% indicadores_compartidos) |>
+  select(indicator_id, indicator_original_name) |>
+  arrange(indicator_id)
+
+# Esto es lo que hace que se vea en tu consola/documento
+print("LISTADO DEFINITIVO DE INDICADORES PARA EL ANÁLISIS (EU28):")
+print(tabla_indicadores_finales, n = Inf)
+```
+
+
+Ahora quiero ver de cuántos indicadores tengo datos por año y por región. 
+```{r}
+# Obtenemos los años únicos ordenados
+anios <- sort(unique(iData$Time))
+
+for(anio in anios){
+  cat("\n--- Indicadores que tienen datos en el año:", anio, "---\n")
+  
+  res <- iData |> 
+    filter(Time == anio) |> 
+    rowwise() |> 
+    mutate(datos_reales = sum(!is.na(c_across(-c(uCode, Time))))) |> 
+    select(uCode, datos_reales)
+  
+  print(res)
+}
+
+resumen_disponibilidad <- iData |>
+  pivot_longer(cols = -c(uCode, Time), names_to = "indicador", values_to = "valor") |>
+  group_by(Time, uCode) |>
+  summarise(total_datos = sum(!is.na(valor)), .groups = "drop") |>
+  pivot_wider(names_from = Time, values_from = total_datos)
+
+
+```
+
+
+
+# Estudiamos NAs
+Uso iData_clean que es en el que ya hemos eliminado los indicadores que sólo tenían datos para Canarias o directamente nada. 
+Con paquete naniar.
+```{r}
+# % NAs por región
+gg_miss_fct(x = iData, fct = uCode) +
+  labs(title = "Distribución de datos faltantes por país EU28",
+       x = "Países EU28", y = "Indicadores")
+
+# % NAs por año
+gg_miss_fct(x = iData, fct = Time) +
+  labs(title = "Distribución de datos faltantes por año",
+       x = "Indicadores", y = "Evolución temporal")
+
+# resumen por variable
+# Gráfico de barras ordenado de más a menos NAs
+gg_miss_var(iData) + 
+  labs(title = "NAs por indicador")
+```
