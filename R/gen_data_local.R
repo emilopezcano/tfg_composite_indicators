@@ -1,5 +1,5 @@
 # install.packages(c('shiny.i18n', 'gfonts', 'shinyalert', 'leaflet', 'mapSpain', 'shinyBS', 'grafify', 'ompr', 'ompr.roi', 'ROI.plugin.symphony', 'countrycode', 'shinyvalidate', 'waiter', 'selenider', 'mapview', 'webshot2', 'Amelia', 'naniar', 'archive', 'rsvg', 'SDGdetector'))
-# install.packages("src/evastur_0.21.0.tar.gz")
+# install.packages("src/evastur_0.23.0.tar.gz")
 library(evastur)
 library(dplyr)
 library(tidyr)
@@ -93,3 +93,9 @@ saveRDS(indicators, "data/indicators.rds")
 saveRDS(cindicators, "data/cindicators.rds")
 saveRDS(geos, "data/geos.rds")
 saveRDS(df_indicadores_completo, "data/df_indicadores_completo.rds")
+
+## Análisis básico
+
+cindicators_wide |>
+  mutate(y = factor(lubridate::year(date))) |> 
+gg_miss_fct(fct = y)
