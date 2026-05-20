@@ -50,6 +50,7 @@ indicators_oecd <- con2 |>
   collect() |>
   semi_join(cindicators_oecd, by = "indicator_id")
 
+
 df_indicadores_completo_oecd <- indicators_oecd |>
   left_join(cindicators_oecd, by = "indicator_id") |>
   mutate(year = get_period(date, period_id))
@@ -71,11 +72,24 @@ summary(oecd_data$indicator_value)
 tbl(con2, "dt_geo") |> 
   filter(nuts_level == 101)
 
+geos_analizar <- tbl(con2,"dt_geo") |> filter(nuts_level ==101) |> select(geo_id, geo_original_name)
+
 ##países del grupo
 
 tbl(con2, "bt_geo_group") |> 
   filter(geo_group_id == "OECD") |> 
   collect()
+
+
+# 1. Filtramos los cálculos brutos para que solo queden los países de OECD
+cindicators_oecd <- cindicators_oecd %>% inner_join(df_groups %>% select(geo_id), by = "geo_id")
+
+# 2. Filtramos los metadatos para que solo queden indicadores con datos en OECD
+indicators_oecd <- indicators_oecd %>% semi_join(oecd_data, by = "indicator_id")
+
+# 3. Hacemos que el df_completo sea el que ya filtramos (oecd_data)
+df_indicadores_completo_oecd <- oecd_data
+
 
 saveRDS(indicators_oecd, "data/indicators_oecd.rds")
 saveRDS(cindicators_oecd, "data/cindicators_oecd.rds")
