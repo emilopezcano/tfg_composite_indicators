@@ -1,4 +1,9 @@
 ---
+title: "19_24_4ccaa_bis"
+format: html
+editor: source
+---
+---
 title: "2019-2024"
 format: 
   html:
@@ -722,7 +727,6 @@ map(c("ECO", "SOC", "ENV"), function(d) {
 })
 ```
 
-
 ## PCA y clustering para todo el panel
 Análisis exploratorio. Hacemos PCA sobre el panel completo apilado (todas las CCAA x tods los años) para entender la estructura de los datos y ver cuánta varianza explica la PC1. También hacemos clustering jerárquico (dendrograma) para ver cómo se agrupan los indicadores. (Aquí todavía no guardamos los pesos en los metadatos del índice, sólo es exploratorio).
 ```{r pca_clustering_panel}
@@ -837,150 +841,248 @@ df_clusters_panel <- tibble(
 print(df_clusters_panel |> arrange(Cluster), n = 100)
 ```
 
-## PCA por niveles
-Ahora hacemos el PCA por niveles. Los pesos que obtengamos para cada indicador los guardamos en los metadatos (en iMeta$Weights).
-```{r pesos_pca_nivel1}
+
+## PONDERACIÓN MIXTA POR DIMENSIÓN
+## SOC  -> PCA + varimax
+## ECO  -> pesos objetivos por variabilidad
+## ENV  -> pesos objetivos por variabilidad
+
+```{r pesos_mixtos_nivel1}
+# -----------------------------
+# 1. Definir dimensiones
+# -----------------------------
 dimensiones <- iMeta |>
   filter(Level == 1) |>
   pull(Parent) |>
   unique()
 
-pesos_pca_L1 <- map_df(dimensiones, function(dim) {
+cat("Dimensiones detectadas:", paste(dimensiones, collapse = ", "), "\n")
+
+# -----------------------------
+# 2. Función pesos por variabilidad
+# -----------------------------
+calcular_pesos_variabilidad <- function(dim, df_datos, iMeta_ref) {
   
-  # qué indicadores queremos
-  inds_dim <- iMeta |>
+  inds_dim <- iMeta_ref |>
     filter(Level == 1, Parent == dim) |>
     pull(iCode)
   
-  df_dim <- df_norm_todos |>
+  df_dim <- df_datos |>
+    select(any_of(inds_dim)) |>
+    select(where(\(x) var(x, na.rm = TRUE) > 1e-10))
+  
+  if (ncol(df_dim) == 0) return(NULL)
+  
+  # Imputación residual simple por mediana, por seguridad
+  df_dim <- df_dim |>
+    mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x)))
+  
+  # Desviación estándar como criterio de capacidad discriminante
+  sds <- sapply(df_dim, sd, na.rm = TRUE)
+  
+  # Si todo falla por alguna razón, pesos iguales
+  if (sum(sds, na.rm = TRUE) <= 0) {
+    pesos <- rep(1 / length(sds), length(sds))
+    names(pesos) <- names(sds)
+  } else {
+    pesos <- sds / sum(sds)
+  }
+  
+  tibble(
+    iCode = names(pesos),
+    Parent = dim,
+    Metodo = "Variabilidad",
+    Weight_L1 = as.numeric(pesos)
+  )
+}
+
+# -----------------------------
+# 3. Función pesos PCA + varimax para SOC
+# -----------------------------
+calcular_pesos_pca_varimax <- function(dim, df_datos, iMeta_ref) {
+  
+  inds_dim <- iMeta_ref |>
+    filter(Level == 1, Parent == dim) |>
+    pull(iCode)
+  
+  df_dim <- df_datos |>
     select(any_of(inds_dim)) |>
     select(where(\(x) var(x, na.rm = TRUE) > 1e-10))
   
   if (ncol(df_dim) < 2) return(NULL)
   
-  pca_dim <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  # Imputación residual simple por mediana
+  df_dim <- df_dim |>
+    mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x)))
   
-  # Usamos solo PC1: los loadings absolutos del primer componente
-  loadings_pc1 <- abs(pca_dim$rotation[, 1])
-  pesos_norm   <- loadings_pc1 / sum(loadings_pc1)
+  # PCA previo para decidir nº componentes (Kaiser)
+  pca_previo <- prcomp(df_dim, center = TRUE, scale. = TRUE)
+  eigenvalues <- pca_previo$sdev^2
+  n_comp <- sum(eigenvalues > 1)
   
-  # Diagnóstico: varianza explicada por PC1
-  var_pc1 <- pca_dim$sdev[1]^2 / sum(pca_dim$sdev^2)
-  cat("Dimensión ", dim, " - Varianza explicada PC1: ", round(var_pc1 * 100, 1), "% \n")
+  # Aseguramos al menos 1 componente y no más columnas que variables
+  n_comp <- max(1, n_comp)
+  n_comp <- min(n_comp, ncol(df_dim))
   
-  tibble(
-    iCode      = colnames(df_dim),
-    Parent     = dim,
-    Weight_PCA = round(pesos_norm, 4)
+  # Si solo sale 1 componente, usamos PC1 sin rotación
+  if (n_comp == 1) {
+    cargas <- abs(pca_previo$rotation[, 1])
+    pesos  <- cargas / sum(cargas)
+    
+    var_pc1 <- eigenvalues[1] / sum(eigenvalues)
+    cat("Dimensión", dim, "- 1 componente retenido. Varianza PC1:",
+        round(var_pc1 * 100, 1), "%\n")
+    
+    return(
+      tibble(
+        iCode = names(pesos),
+        Parent = dim,
+        Metodo = "PCA_PC1",
+        Weight_L1 = as.numeric(pesos)
+      )
+    )
+  }
+  
+  # Si hay 2 o más componentes, usamos principal + varimax
+  rotacion <- psych::principal(
+    df_dim,
+    nfactors = n_comp,
+    rotate = "varimax",
+    scores = FALSE
   )
-})
-
-print(pesos_pca_L1 |> arrange(Parent, desc(Weight_PCA)), n = 60)
-```
-
-```{r pesos_pca_nivel2}
-# Score de cada dimensión = media ponderada de sus indicadores con pesos PCA L1
-df_scores_dim <- map_df(dimensiones, function(dim) {
   
-  inds_dim <- pesos_pca_L1 |>
-    filter(Parent == dim) |>
-    pull(iCode)
+  loadings_mat <- as.data.frame(unclass(rotacion$loadings))
+  loadings_mat$iCode <- rownames(loadings_mat)
   
-  pesos_dim <- pesos_pca_L1 |>
-    filter(Parent == dim) |>
-    pull(Weight_PCA)
+  # Nos quedamos con las cargas absolutas
+  nombres_factores <- setdiff(colnames(loadings_mat), "iCode")
   
-  df_dim <- df_norm_todos |>
-    select(any_of(inds_dim))
+  loadings_long <- loadings_mat |>
+    pivot_longer(
+      cols = all_of(nombres_factores),
+      names_to = "Factor",
+      values_to = "Carga"
+    ) |>
+    mutate(Carga_abs = abs(Carga))
   
-  score <- as.vector(as.matrix(df_dim) %*% pesos_dim)
+  # Peso del factor según varianza explicada
+  var_explicada <- rotacion$Vaccounted["Proportion Var", ]
+  var_explicada <- var_explicada / sum(var_explicada)
   
-  tibble(dimension = dim, score = score, obs = seq_len(nrow(df_dim)))
-}) |>
-  pivot_wider(names_from = dimension, values_from = score, id_cols = obs) |>
-  select(-obs)
+  df_var <- tibble(
+    Factor = names(var_explicada),
+    VarFactor = as.numeric(var_explicada)
+  )
+  
+  # Peso final indicador = suma(|carga| * importancia factor)
+  pesos <- loadings_long |>
+    left_join(df_var, by = "Factor") |>
+    mutate(aporte = Carga_abs * VarFactor) |>
+    group_by(iCode) |>
+    summarise(peso_bruto = sum(aporte, na.rm = TRUE), .groups = "drop") |>
+    mutate(
+      Weight_L1 = peso_bruto / sum(peso_bruto),
+      Parent = dim,
+      Metodo = "PCA_varimax"
+    ) |>
+    select(iCode, Parent, Metodo, Weight_L1)
+  
+  cat("Dimensión", dim, "- componentes retenidos:", n_comp, "\n")
+  cat("Varianza relativa componentes:",
+      paste(round(var_explicada * 100, 1), collapse = " | "), "\n")
+  
+  pesos
+}
 
-# PCA sobre los scores de las 3 dimensiones - solo PC1
-pca_L2 <- prcomp(df_scores_dim, center = TRUE, scale. = TRUE)
-
-var_pc1_L2 <- pca_L2$sdev[1]^2 / sum(pca_L2$sdev^2)
-cat("Varianza explicada PC1 nivel dimensiones: ", round(var_pc1_L2 * 100, 1), "% \n")
-
-loadings_L2   <- abs(pca_L2$rotation[, 1])
-pesos_L2_norm <- loadings_L2 / sum(loadings_L2)
-
-df_pesos_L2 <- tibble(
-  iCode      = dimensiones,
-  Weight_PCA = round(pesos_L2_norm, 4)
+# -----------------------------
+# 4. Aplicamos método mixto
+# -----------------------------
+pesos_mixtos_L1 <- bind_rows(
+  calcular_pesos_variabilidad("ECO", df_norm_todos, iMeta),
+  calcular_pesos_pca_varimax("SOC", df_norm_todos, iMeta),
+  calcular_pesos_variabilidad("ENV", df_norm_todos, iMeta)
 )
 
-print(df_pesos_L2)
+# Normalización final de seguridad dentro de cada dimensión
+pesos_mixtos_L1 <- pesos_mixtos_L1 |>
+  group_by(Parent) |>
+  mutate(Weight_L1 = Weight_L1 / sum(Weight_L1, na.rm = TRUE)) |>
+  ungroup()
+
+cat("\n--- PESOS NIVEL 1 ---\n")
+print(pesos_mixtos_L1 |> arrange(Parent, desc(Weight_L1)), n = 100)
+
+cat("\nComprobación suma pesos por dimensión:\n")
+print(
+  pesos_mixtos_L1 |>
+    group_by(Parent, Metodo) |>
+    summarise(Suma = sum(Weight_L1), .groups = "drop")
+)
 ```
 
-Actualizamos los pesos. 
-```{r actualizar_imeta_pesos_pca}
+```{r actualizar_imeta_pesos_mixtos}
+# Pesos iguales entre dimensiones en nivel 2
+df_pesos_L2 <- tibble(
+  iCode = c("ECO", "SOC", "ENV"),
+  Weight_L2 = c(1/3, 1/3, 1/3)
+)
 
-# Nivel 1: Pesos PCA para cada indicador individual dentro de su dimensión
-# Nivel 2: Pesos PCA para las 3 dimensiones (ENV, ECO, SOC) del índice final
-
-# Unimos los pesos de Nivel 1 (indicadores) y Nivel 2 (dimensiones)
-iMeta_PCA <- iMeta |>
-  # Pesos PCA para indicadores individuales (Nivel 1)
+# Actualizamos iMeta
+iMeta_mixto <- iMeta |>
   left_join(
-    pesos_pca_L1|> select(iCode, Weight_PCA),
+    pesos_mixtos_L1 |> select(iCode, Weight_L1, Metodo),
     by = "iCode"
   ) |>
-  rename(Weight_PCA_L1 = Weight_PCA) |>
-  
-  # Pesos PCA para las 3 dimensiones (Nivel 2)
   left_join(
-    df_pesos_L2|> select(iCode, Weight_PCA),
+    df_pesos_L2,
     by = "iCode"
   ) |>
-  rename(Weight_PCA_L2 = Weight_PCA) |>
-  
-  # Asignamos los pesos definitivos
   mutate(
     Weight = case_when(
-      Level == 1 & !is.na(Weight_PCA_L1) ~ Weight_PCA_L1,  # Pesos PCA para indicadores
-      Level == 2 & !is.na(Weight_PCA_L2) ~ Weight_PCA_L2,  # Pesos PCA para dimensiones
-      TRUE ~ Weight                                         # Mantener peso original si no hay PCA
+      Level == 1 & !is.na(Weight_L1) ~ Weight_L1,
+      Level == 2 & !is.na(Weight_L2) ~ Weight_L2,
+      TRUE ~ Weight
     )
-  ) |>
-  
-  # Limpiamos columnas temporales
-  select(-Weight_PCA_L1, -Weight_PCA_L2)
+  )
 
+cat("PESOS DIMENSIONES (Nivel 2)\n")
+print(
+  iMeta_mixto |>
+    filter(Level == 2) |>
+    select(iCode, Weight) |>
+    arrange(desc(Weight))
+)
 
-# Verificamos pesos que han salido de las dimensiones 
+cat("\nRESUMEN PESOS NIVEL 2\n")
+cat(
+  "Suma pesos dimensiones:",
+  round(sum(iMeta_mixto |> filter(Level == 2) |> pull(Weight)), 4),
+  "\n"
+)
 
-cat(" PESOS DE LAS DIMENSIONES (Nivel 2) \n")
-print(iMeta_PCA |> 
-        filter(Level == 2) |> 
-        select(iCode, Weight) |>
-        arrange(desc(Weight)))
+cat("\nRESUMEN PESOS NIVEL 1\n")
+print(
+  iMeta_mixto |>
+    filter(Level == 1) |>
+    group_by(Parent) |>
+    summarise(Suma = sum(Weight), .groups = "drop")
+)
+```
 
-cat("\n RESUMEN DE PESOS \n")
-cat("Suma de pesos dimensiones (debería ser 1): ", 
-        round(sum(iMeta_PCA |> filter(Level == 2) |> pull(Weight)), 4), "\n")
-
-
-# Reconstruimos el purse con los pesos obtenidos y VOLVEMOS A PONER LOS DATOS IMPUTADOS CON MICE EN iDATA !!
-purse_PCA <- new_coin(
+```{r reconstruir_purse_pesos_mixtos}
+purse_mixto <- new_coin(
   iData    = iData_imputed_mice,
-  iMeta    = iMeta_PCA,
+  iMeta    = iMeta_mixto,
   split_to = "all",
   quietly  = TRUE
 )
 
-# Marcamos datos como ya imputados en cada coin del purse_PCA (igual que antes)
-for(i in seq_along(purse_PCA$coin)){
-  purse_PCA$coin[[i]]$Data$Imputed <- purse_PCA$coin[[i]]$Data$Raw
+for(i in seq_along(purse_mixto$coin)){
+  purse_mixto$coin[[i]]$Data$Imputed <- purse_mixto$coin[[i]]$Data$Raw
 }
 
-# Continuamos como antes con Treat() y con Normalise()
-purse_PCA <- Treat(
-  purse_PCA,
+purse_mixto <- Treat(
+  purse_mixto,
   dset = "Imputed",
   f_t = "winsorise",
   f_t_para = list(
@@ -992,202 +1094,20 @@ purse_PCA <- Treat(
   disable = FALSE
 )
 
-purse_PCA <- Normalise(
-  purse_PCA,
+purse_mixto <- Normalise(
+  purse_mixto,
   dset         = "Treated",
   normalise_by = "all",
   f_n          = "n_minmax",
   f_n_para     = list(l_u = c(1, 100))
 )
 
-# Verificamos finalmente 
+dset_norm <- get_dset(purse_mixto, dset = "Normalised")
 
-dset_norm <- get_dset(purse_PCA, dset = "Normalised")
+cat("\nESTADÍSTICAS DEL DATASET NORMALIZADO\n")
+cat("Mínimo:", round(min(dset_norm[, -c(1, 2)], na.rm = TRUE), 2), "\n")
+cat("Máximo:", round(max(dset_norm[, -c(1, 2)], na.rm = TRUE), 2), "\n")
+cat("NAs totales:", sum(is.na(dset_norm[, -c(1, 2)])), "\n")
 
-cat("\n ESTADÍSTICAS DEL DATASET NORMALIZADO \n")
-cat("Mínimo: ", round(min(dset_norm[, -c(1, 2)], na.rm = TRUE), 2), "\n")
-cat("Máximo: ", round(max(dset_norm[, -c(1, 2)], na.rm = TRUE), 2), "\n")
-cat("NAs totales: ", sum(is.na(dset_norm[, -c(1, 2)])), "\n")
-
-# Guardamos el purse procesado para usarlo después
-print(purse_PCA)
+print(purse_mixto)
 ```
-
-## CASO 5: PCA/FA manual OCDE
-```{r caso5_pesos_ocde}
-# Función que calcula pesos OCDE para una dimensión (ECO, SOC o ENV)
-calcular_pesos_ocde <- function(dim, df_datos, iMeta_ref) {
-  
-  # Seleccionamos indicadores que pertenecen a la dimensión
-  inds_dim <- iMeta_ref |> filter(Level == 1, Parent == dim) |> pull(iCode)
-  df_dim <- df_datos |> select(any_of(inds_dim))
-  
-  # Eliminamos variables con varianza 0 (necesario para el PCA)
-  df_dim <- df_dim |> select(where(\(x) var(x, na.rm = TRUE) > 1e-10))
-  
-  # Determinamos cuántos componentes retener (Criterio OCDE: Eigenvalue > 1)
-  pca_previo <- prcomp(df_dim, center = TRUE, scale. = TRUE)
-  n_factores <- sum(pca_previo$sdev^2 > 1)
-  
-  # Si solo sale 1 factor, no se puede rotar, usamos el PCA simple (los pesos 
-  # se obtienen directamente de las cargas del primer componente)
-  if (n_factores < 2) {
-    loadings_pc1 <- abs(pca_previo$rotation[, 1]) # importancia de cada indicador
-    pesos <- loadings_pc1^2 / sum(loadings_pc1^2) # OCDE usa cuadrados de cargas
-    return(tibble(iCode = names(pesos), Weight_OCDE = pesos, Factor = "F1", Var_Factor = 1))
-  }
-
-  # Rotación Varimax
-  # Usamos la función principal del paquete psych
-  rotacion <- psych::principal(df_dim, nfactors = n_factores, rotate = "varimax")
-  
-  # Asignamos cada indicador al factor donde más carga tiene 
-  loadings_mat <- as.data.frame(unclass(rotacion$loadings))
-  cargas_maximas <- loadings_mat |>
-    mutate(iCode = rownames(loadings_mat),
-           Factor_Asignado = colnames(loadings_mat)[apply(loadings_mat, 1, which.max)])
-  
-  # Calculamos pesos intermedios y finales
-  pesos_finales <- cargas_maximas |>
-    pivot_longer(cols = starts_with("RC"), names_to = "Factor", values_to = "Carga") |>
-    filter(Factor == Factor_Asignado) |>
-    group_by(Factor) |>
-    mutate(
-      # Peso relativo dentro del grupo (indicadores más importantes pesan más)
-      Weight_in_Factor = Carga^2 / sum(Carga^2)) |>
-    ungroup()
-  
- # Calculamos la importancia de cada factor (varianza explicada)
-  var_explicada <- rotacion$Vaccounted["Proportion Var", ]
-  var_relativa <- var_explicada / sum(var_explicada)
-  
-# Peso final = peso dentro del factor x importancia del factor
-  pesos_finales <- pesos_finales |>
-    mutate(Var_Factor = as.numeric(var_relativa[Factor]),
-           Weight_OCDE = Weight_in_Factor * Var_Factor)
-  
-# Devolvemos pesos finales por indicador
-  return(pesos_finales |> select(iCode, Weight_OCDE, Factor, Var_Factor))
-}
-
-# Aplicamos la función a las 3 dimensiones
-pesos_ocde_L1 <- map_df(c("ECO", "SOC", "ENV"), \(d) {
-  res <- calcular_pesos_ocde(d, df_norm_todos, iMeta)
-  res$Dimension <- d
-  res
-})
-
-# Mostramos resultados ordenados
-print(pesos_ocde_L1 |> arrange(Dimension, Factor, desc(Weight_OCDE)), n = 39)
-
-# La suma de los pesos debería darnos 1  
-cat("Suma total de pesos OCDE:", sum(pesos_ocde_L1$Weight_OCDE), "\n")
-
-pesos_ocde_L1 |> group_by(Dimension) |>
-  summarise(suma = sum(Weight_OCDE))
-```
-
-Quiero ver los nombres de los indicadores que pertenecen a cada factor: 
-```{r}
-# Creamos la tabla descriptiva de indicadores por factor
-tabla_factores_detalle <- pesos_ocde_L1 |>
-  # Unimos con iMeta para traer el nombre del indicador (iName)
-  left_join(
-    iMeta |> select(iCode, iName), 
-    by = "iCode"
-  ) |>
-  # Seleccionamos y reordenamos las columnas
-  select(Dimension, Factor, iCode, iName, Weight_OCDE) |>
-  # Ordenamos
-  arrange(Dimension, Factor, desc(Weight_OCDE))
-
-# Imprimimos la tabla
-tabla_factores_detalle |>
-  knitr::kable(
-    caption = "Composición de Factores (PCA con Rotación Varimax) - OCDE",
-    digits = 4,
-    col.names = c("Dimensión", "Factor", "Código", "Nombre Indicador", "Peso Final"),
-    format = "html"
-  )
-```
-```{r}
-# Agregación con pesos OCDE-Varimax y cálculo del índice final
-df_norm_ids <- get_dset(purse, dset = "Normalised") |>
-  filter(uCode != "ESP") |>
-  select(uCode, Time)
-
-df_norm_vals <- get_dset(purse, dset = "Normalised") |>
-  filter(uCode != "ESP") |>
-  select(-uCode, -Time) |>
-  mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x)))
-
-# Índice por dimensión
-df_dims_score <- map_dfc(c("ECO", "SOC", "ENV"), function(d) {
-  pesos_d <- pesos_ocde_L1 |> filter(Dimension == d)
-  pesos_v <- setNames(pesos_d$Weight_OCDE, pesos_d$iCode)
-  mat_d   <- df_norm_vals |> select(any_of(names(pesos_v))) |> as.matrix()
-  mat_d   <- mat_d[, names(pesos_v)]
-  tibble(!!d := as.vector(mat_d %*% pesos_v))
-})
-
-# Índice global = media simple de las 3 dimensiones (peso igual entre dimensiones)
-df_resultado_final <- df_norm_ids |>
-  bind_cols(df_dims_score) |>
-  mutate(Score_Global = (ECO + SOC + ENV) / 3) |>
-  rename(CCAA = uCode, Año = Time)
-
-# Tabla resultado
-df_resultado_final |>
-  arrange(Año, desc(Score_Global)) |>
-  knitr::kable(
-    digits = 3,
-    caption = "Índice Sintético de Turismo Sostenible — por dimensión y global",
-    col.names = c("CCAA", "Año", "ECO", "SOC", "ENV", "Índice Global")
-  )
-```
-
-
-# Creo el excel para el análisis de NAs. 
-```{r}
-library(openxlsx)
-library(dplyr)
-library(tidyr)
-library(lubridate)
-
-# 1. Definimos la lista maestra de todos los indicadores que deberían estar
-# Usamos los indicadores de iMeta que no han sido eliminados
-todos_los_indicadores <- iMeta$iCode[!(iMeta$iCode %in% c("ECO", "ENV", "SOC", "TotalIndex"))]
-
-# 2. Definimos la lista maestra de todas las regiones (uCode)
-todas_las_regiones <- unique(indicadores_calculados_final$geo_id)
-
-wb <- createWorkbook()
-
-for(anio in sort(anios)){
-  
-  tabla_nas_anio <- indicadores_calculados_final |>
-    mutate(Time = year(as.Date(date))) |>
-    filter(Time == anio) |> 
-    mutate(es_na = if_else(is.na(value), 1, 0)) |> 
-    select(uCode = geo_id, indicator_id, es_na) |>
-    complete(indicator_id = todos_los_indicadores, uCode = todas_las_regiones) |>
-    # ----------------------------------------------
-    pivot_wider(names_from = uCode, 
-                values_from = es_na) |>
-    # Ordenar por ID de indicador para que todos los años sean idénticos visualmente
-    arrange(indicator_id)
-  
-  nombre_hoja <- as.character(anio)
-  addWorksheet(wb, nombre_hoja)
-  writeData(wb, nombre_hoja, tabla_nas_anio)
-  
-  addStyle(wb, nombre_hoja, style = createStyle(textDecoration = "bold"), 
-           rows = 1, cols = 1:ncol(tabla_nas_anio))
-}
-
-saveWorkbook(wb, "Analisis_NAs_4CCAA.xlsx", overwrite = TRUE)
-
-cat("Excel generado con estructura fija de 52 indicadores para todos los años.")
-```
-
-

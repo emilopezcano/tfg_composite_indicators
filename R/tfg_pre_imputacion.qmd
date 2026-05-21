@@ -285,7 +285,7 @@ print(tabla_nas_anio)
 ```
 
 
-
+# excel NAs
 ```{r}
 library(openxlsx)
 library(dplyr)
@@ -326,7 +326,7 @@ for(anio in sort(anios)){
            rows = 1, cols = 1:ncol(tabla_nas_anio))
 }
 
-saveWorkbook(wb, "Analisis_Estructural_Completo_NAs_AMELIA.xlsx", overwrite = TRUE)
+saveWorkbook(wb, "Analisis_Estructural_Completo_NAs_NUEVO.xlsx", overwrite = TRUE)
 
 cat("Excel generado con estructura fija de 52 indicadores para todos los años.")
 ```
