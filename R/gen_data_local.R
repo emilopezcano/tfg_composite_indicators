@@ -96,6 +96,9 @@ saveRDS(df_indicadores_completo, "data/df_indicadores_completo.rds")
 
 ## Análisis básico
 
+cindicators_wide <- cindicators |>
+  pivot_wider(names_from = indicator_id, values_from = indicator_value)
+
 cindicators_wide |>
   mutate(y = factor(lubridate::year(date))) |> 
-gg_miss_fct(fct = y)
+naniar::gg_miss_fct(fct = y)
