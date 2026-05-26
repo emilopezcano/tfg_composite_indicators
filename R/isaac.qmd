@@ -1,0 +1,505 @@
+---
+title: "isaac"
+format: html
+editor: source
+---
+
+Librerías necesarias.
+```{r librerias, message=FALSE, warning=FALSE}
+library(COINr)
+library(dplyr)
+library(tidyr)
+library(caret)
+library(lubridate)
+library(ggplot2)
+library(stringr)
+library(mice)
+library(scales)
+library(knitr)
+library(psych)
+library(purrr)
+library(ggcorrplot)
+library(naniar)
+library(performance)
+```
+
+```{r}
+corregir_matriz_correlacion <- function(cor_matrix) {
+  # Descomposición espectral: C = V * D * V'
+  eigen_result <- eigen(cor_matrix)
+  valores <- eigen_result$values
+  vectores <- eigen_result$vectors
+  
+  # Identificar el mínimo eigenvalue ESTRICTAMENTE positivo
+  valores_positivos <- valores[valores > 1e-10]  # ← Umbral para evitar ceros numéricos
+  
+  if (length(valores_positivos) == 0) {
+    # Si NO hay ningún eigenvalue positivo, usar epsilon pequeño
+    min_positivo <- 1e-6
+    cat("ADVERTENCIA: No hay eigenvalues positivos. Usando epsilon =", min_positivo, "\n")
+  } else {
+    min_positivo <- min(valores_positivos)
+  }
+  
+  # Reemplazar eigenvalues <= epsilon con el mínimo estrictamente positivo
+  valores_corregidos <- ifelse(valores < 1e-10, min_positivo, valores)  # ← CAMBIO AQUÍ
+  
+  cat("Eigenvalues originales:", round(valores, 6), "\n")
+  cat("Eigenvalues corregidos:", round(valores_corregidos, 6), "\n")
+  cat("Mínimo positivo usado:", round(min_positivo, 6), "\n\n")
+  
+  # Reconstruir matriz: C_nueva = V * D_corregida * V'
+  cor_corregida <- vectores %*% diag(valores_corregidos) %*% t(vectores)
+  
+  # Asegurar que la diagonal sea exactamente 1
+  diag(cor_corregida) <- 1
+  
+  # Hacer simétrica (por redondeo numérico)
+  cor_corregida <- (cor_corregida + t(cor_corregida)) / 2
+  
+  # Devolver con nombres de filas/columnas
+  rownames(cor_corregida) <- rownames(cor_matrix)
+  colnames(cor_corregida) <- colnames(cor_matrix)
+  
+  return(cor_corregida)
+}
+```
+
+
+# Cargamos datos + imputación, tratamiento, normalización
+```{r}
+# Cargamos los 3 dfs: el de los valores, el de los metadatos y el df completo.
+indicadores_calculados_final <- readRDS("../data/cindicators.rds")
+indicators_meta_final <- readRDS("../data/indicators.rds")
+df_indicadores_completo_final <- readRDS("../data/df_indicadores_completo.rds")
+
+# Renombramos la columna valor, eliminamos la source_id que es la misma para todos y no aporta nada
+indicadores_calculados_final <- indicadores_calculados_final |> 
+  rename(value = indicator_value) |> 
+  select(-source_id) |> 
+  mutate(Year = year(as.Date(date))) |> 
+  filter(geo_id!="ES-CE", geo_id!="ES-ML")|>
+  filter(indicator_id !="IAMB0003", indicator_id != "IAMB0004", indicator_id !="IAMB0005", indicator_id !="IECO0012", indicator_id !="IECO0013", indicator_id !="ISOC0004")
+
+# Construyo iData
+# Transformamos a formato ancho
+iData <- indicadores_calculados_final |>
+  mutate(Time = year(as.Date(date))) |>
+  select(uCode = geo_id, Time, indicator_id, value) |> 
+  pivot_wider(names_from = indicator_id, values_from = value)
+
+head(iData)
+
+# Construyo iMeta
+df <- indicators_meta_final |>
+  select(-any_of("dimension_id")) |>
+  left_join(
+    df_indicadores_completo_final |>
+      select(indicator_id, dimension_id) |>
+      distinct(),
+    by = "indicator_id"
+  )
+
+#  NIVEL 1: INDICADORES 
+iMeta_L1 <- df |>
+  select(
+    iCode     = indicator_id,
+    iName     = indicator_original_name,
+    Parent    = dimension_id,
+    Direction = indicator_direction,
+    Weight    = indicator_weight
+  ) |>
+  distinct(iCode, .keep_all = TRUE) |>
+  mutate(
+    Direction = ifelse(Direction == "+", 1, -1),
+    Level = 1,
+    Type  = "Indicator"
+  )
+
+#  NIVEL 2: DIMENSIONES 
+iMeta_L2 <- iMeta_L1 |>
+  select(iCode = Parent) |>
+  distinct() |>
+  mutate(
+    iName     = paste("Dimensión:", iCode),
+    Level     = 2,
+    Parent    = "TotalIndex",
+    Direction = 1,
+    Weight    = 1,
+    Type      = "Aggregate"
+  )
+
+#  NIVEL 3: ÍNDICE FINAL 
+iMeta_L3 <- data.frame(
+  iCode     = "TotalIndex",
+  iName     = "Índice Sintético Regional",
+  Level     = 3,
+  Parent    = NA,
+  Direction = 1,
+  Weight    = 1,
+  Type      = "Aggregate"
+)
+
+#  UNIÓN FINAL 
+iMeta <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
+
+glimpse(iMeta)
+
+# Ajusto iMeta a iData para que no me dé problemas
+# Indicadores realmente presentes en iData
+indicadores_en_iData <- setdiff(colnames(iData), c("uCode", "Time"))
+
+# Nos quedamos solo con los indicadores de iMeta_L1 que están en iData
+iMeta_L1 <- iMeta_L1 |>
+  filter(iCode %in% indicadores_en_iData)
+
+# Reconstruimos niveles 2 y 3 a partir de este L1 depurado
+iMeta_L2 <- iMeta_L1 |>
+  select(iCode = Parent) |>
+  distinct() |>
+  mutate(
+    iName     = paste("Dimensión:", iCode),
+    Level     = 2,
+    Parent    = "TotalIndex",
+    Direction = 1,
+    Weight    = 1,
+    Type      = "Aggregate"
+  )
+
+iMeta_L3 <- data.frame(
+  iCode     = "TotalIndex",
+  iName     = "Índice Sintético Regional",
+  Level     = 3,
+  Parent    = NA,
+  Direction = 1,
+  Weight    = 1,
+  Type      = "Aggregate"
+)
+
+iMeta <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
+
+# Comprobación: qué códigos de nivel 1 no están en iData (debería ser vacío)
+setdiff(iMeta$iCode[iMeta$Level == 1], colnames(iData))
+
+# Creo el purse: 
+purse <- new_coin(
+  iData    = iData,
+  iMeta    = iMeta,
+  split_to = "all",
+  quietly  = TRUE
+)
+
+# Imputación  MICE
+# 1. Preparamos datos numéricos
+df_raw <- get_dset(purse, dset = "Raw") 
+df_ids <- df_raw |> select(uCode, Time) 
+df_numeric <- df_raw |> select(-uCode, -Time) 
+
+# 2. Diagnóstico Pre-MICE
+na_pre <- sum(is.na(df_numeric)) #Celdas vacías en total
+total_cells <- prod(dim(df_numeric)) #Tamaño total de nuestra tabla
+cat("PRE-MICE: ", na_pre, " NAs (", round(100 * na_pre / total_cells, 2), "%)\n")
+
+# 3. Ejecutar MICE (PMM)
+#df_numeric son los datos a procesar, m=1 creamos una sola versión de datos imputados, método PMM: Predictive Mean Matching, busca valores reales existentes que cuadren según el perfil de la regón. Con maxit = 5, el algoritmo itera 5 veces para refinar sus predicciones. Fijamos seed 42. 
+mice_out <- mice(df_numeric, m = 1, method = "cart", maxit = 5, seed = 42, printFlag = FALSE)
+df_imputed <- complete(mice_out)
+
+# 4. Diagnóstico Post-MICE con porcentaje
+na_post <- sum(is.na(df_imputed)) #volvemos a contar los NA
+cat("POST-MICE:", na_post, " NAs (", round(100 * na_post / total_cells, 2), "%)\n")
+
+# 5. ¿Qué se ha quedado sin imputar?
+if(na_post > 0){
+  cols_con_na <- colSums(is.na(df_imputed))
+  print("Indicadores que siguen teniendo NAs:")
+  print(cols_con_na[cols_con_na > 0])
+}
+
+# 6. Reconstruimos iData e integramos en el purse
+iData_imputed_mice <- bind_cols(df_ids, df_imputed)
+
+purse <- new_coin(
+  iData = iData_imputed_mice,
+  iMeta = iMeta,
+  split_to = "all",
+  quietly = TRUE
+)
+
+# Marcar datos como ya imputados en cada coin del purse
+# (Los datos MICE ya están imputados, así que Imputed = Raw)
+for(i in seq_along(purse$coin)){
+  purse$coin[[i]]$Data$Imputed <- purse$coin[[i]]$Data$Raw
+}
+
+# Tratamos outliers 
+purse <- Treat(
+  purse,
+  dset = "Imputed",
+  f_t = "winsorise",
+  f_t_para = list(na.rm = TRUE,
+                  winmax = 5, 
+                  skew_thresh = 2,
+                  kurt_thresh = 3.5,
+                  force_win = TRUE)
+)
+
+# Normalizamos
+purse <- Normalise(
+  purse,
+  dset         = "Treated",
+  normalise_by = "all",
+  f_n          = "n_minmax",
+  f_n_para     = list(l_u = c(0, 100))
+)
+```
+
+# Función para elegir dimensión y realizar el análisis
+```{r}
+datos_normalizados <- get_dset(purse, dset = "Normalised") |> select(-uCode,-Time)
+
+analisis_dimension <- function(datos_norm, prefijo, corte = 0.2) {
+  
+  indicadores_dim <- datos_norm |>
+    select(starts_with(prefijo)) |>
+    select(where(\(x) var(x, na.rm = TRUE) > 0)) |>
+    mutate(across(everything(), \(x) ifelse(is.na(x), median(x, na.rm = TRUE), x)))
+  
+  cat("Dimensión:", prefijo, "\n")
+  cat("Indicadores:", ncol(indicadores_dim), "\n\n")
+  
+  # ===== CAMBIO 1: Corregir matriz antes del KMO inicial =====
+  cor_inicial <- cor(indicadores_dim, use = "pairwise.complete.obs")
+  cor_inicial_corregida <- corregir_matriz_correlacion(cor_inicial)
+  
+  kmo_inicial <- KMO(indicadores_dim)
+  valor_kmo_inicial <- kmo_inicial$MSA
+  
+  cat("KMO inicial:", round(valor_kmo_inicial, 3), "\n\n")
+  
+   # ===== CAMBIO 2: Usar matriz corregida para clustering =====
+  dist_dim <- as.dist(1 - abs(cor_inicial_corregida))  # ← Usar matriz corregida
+  hc_dim <- hclust(dist_dim, method = "complete")
+  
+  plot(hc_dim,
+       main = paste("Dendrograma", prefijo),
+       xlab = "Indicadores",
+       ylab = "Distancia (1 - |r|)",
+       cex = 0.7)
+  
+  abline(h = corte, col = "red", lty = 2)
+  
+  clusters <- cutree(hc_dim, h = corte)
+  
+  cat("Número de clusters:", length(unique(clusters)), "\n")
+  print(table(clusters))
+  cat("\n")
+  
+  tabla_clusters <- data.frame(
+    indicador = names(clusters),
+    cluster = clusters
+  ) |>
+    arrange(cluster, indicador)
+  
+  print(tabla_clusters)
+  cat("\n")
+  
+  indicadores_agregados <- data.frame(row.names = seq_len(nrow(indicadores_dim)))
+  
+  for (i in unique(clusters)) {
+    inds_cluster <- tabla_clusters |>
+      filter(cluster == i) |>
+      pull(indicador)
+    
+    media_cluster <- indicadores_dim |>
+      select(all_of(inds_cluster)) |>
+      rowMeans(na.rm = TRUE)
+    
+    indicadores_agregados[[paste0("Cluster_", i)]] <- media_cluster
+  }
+  
+  cat("Indicadores agregados creados:", ncol(indicadores_agregados), "\n\n")
+  
+ # ===== CAMBIO 3: Corregir matriz antes del KMO agregado =====
+  if (ncol(indicadores_agregados) >= 2) {
+    cor_agregada <- cor(indicadores_agregados, use = "pairwise.complete.obs")
+    cor_agregada_corregida <- corregir_matriz_correlacion(cor_agregada)
+    
+    kmo_agregado <- KMO(cor_agregada_corregida)  # ← Usar matriz corregida
+    valor_kmo_agregado <- kmo_agregado$MSA
+  } else {
+    valor_kmo_agregado <- NA
+  }
+  
+  cat("KMO agregado:", round(valor_kmo_agregado, 3), "\n\n")
+  
+  if (!is.na(valor_kmo_agregado) && valor_kmo_agregado > 0.5 && valor_kmo_agregado > valor_kmo_inicial) {
+    
+    cat("Decisión: PCA + Varimax sobre indicadores agregados\n\n")
+    datos_pca <- indicadores_agregados
+    metodo <- "PCA_agregados"
+    
+  } else if (valor_kmo_inicial > 0.5) {
+    
+    cat("Decisión: PCA + Varimax sobre indicadores originales\n\n")
+    datos_pca <- indicadores_dim
+    metodo <- "PCA_originales"
+    
+  } else {
+    
+    cat("Decisión: pesos iguales\n\n")
+    metodo <- "Pesos_iguales"
+    
+    pesos <- data.frame(
+      indicador = colnames(indicadores_dim),
+      peso = 1 / ncol(indicadores_dim)
+    )
+    
+    return(list(
+      dimension = prefijo,
+      kmo_inicial = valor_kmo_inicial,
+      kmo_agregado = valor_kmo_agregado,
+      metodo = metodo,
+      clusters = tabla_clusters,
+      pesos = pesos
+    ))
+  }
+  
+  pca_previo <- prcomp(datos_pca, center = TRUE, scale. = TRUE)
+  eigenvalues <- pca_previo$sdev^2
+  n_comp <- sum(eigenvalues > 1)
+  
+  if (n_comp == 0) {
+    n_comp <- 1
+  }
+  
+  cat("Componentes retenidos:", n_comp, "\n")
+  cat("Eigenvalues:", round(eigenvalues, 3), "\n\n")
+  
+  pca_varimax <- principal(datos_pca, nfactors = n_comp, rotate = "varimax")
+  
+  cargas <- pca_varimax$loadings |>
+    unclass() |>
+    as.data.frame()
+  
+  print(cargas)
+  cat("\n")
+  
+  varianza_comp <- pca_varimax$Vaccounted["Proportion Var", ]
+  varianza_relativa <- varianza_comp / sum(varianza_comp)
+  
+  pesos <- data.frame(indicador = rownames(cargas))
+  pesos$peso <- 0
+  
+  for (i in 1:n_comp) {
+    pesos$peso <- pesos$peso + abs(cargas[, i]) * varianza_relativa[i]
+  }
+  
+  pesos$peso <- pesos$peso / sum(pesos$peso)
+  
+  pesos <- pesos |>
+    arrange(desc(peso))
+  
+  cat("Pesos finales:\n")
+  print(pesos)
+  cat("\n")
+  cat("========================================\n\n")
+  
+  return(list(
+    dimension = prefijo,
+    kmo_inicial = valor_kmo_inicial,
+    kmo_agregado = valor_kmo_agregado,
+    metodo = metodo,
+    clusters = tabla_clusters,
+    pesos = pesos
+  ))
+}
+```
+
+# Ejecutamos
+```{r}
+dimensiones <- c("IECO", "ISOC", "IAMB")
+
+resultados <- lapply(dimensiones, \(x) analisis_dimension(datos_normalizados, x))
+names(resultados) <- dimensiones # Para poner nombre a los elementos de la lista "resultados"!!
+```
+
+Ahora podemos acceder a pesos, método aplicado o índice KMO ejecutando: 
+resultados$IECO$pesos, resultados$IAMB$kmo_agregado, ... p.ej.
+
+# Tabla de pesos finales 
+Código + nombre + peso de cada indicador.
+Desagrupamos clústers en el caso de que los hayamos hecho. 
+
+```{r}
+crear_tabla_pesos_completa <- function(resultado_dim, dimension_nombre) {
+  
+  # Si el método fue pesos iguales, ya está listo
+  if (resultado_dim$metodo == "Pesos_iguales") {
+    tabla <- resultado_dim$pesos |>
+      mutate(dimension = dimension_nombre)
+    return(tabla)
+  }
+  
+  # Si fue PCA sobre originales, también ya está listo
+  if (resultado_dim$metodo == "PCA_originales") {
+    tabla <- resultado_dim$pesos |>
+      mutate(dimension = dimension_nombre)
+    return(tabla)
+  }
+  
+  # SOLO si fue PCA_agregados, hay que desagregar
+  if (resultado_dim$metodo == "PCA_agregados") {
+    pesos_clusters <- resultado_dim$pesos
+    tabla_clusters <- resultado_dim$clusters
+    
+    tabla_final <- tabla_clusters |>
+      mutate(cluster = as.character(cluster)) |>
+      left_join(
+        pesos_clusters |> 
+          mutate(cluster_id = str_extract(indicador, "\\d+")) |>
+          select(cluster_id, peso_cluster = peso),
+        by = c("cluster" = "cluster_id")
+      ) |>
+      group_by(cluster) |>
+      mutate(
+        n_indicadores = n(),
+        peso = peso_cluster / n_indicadores
+      ) |>
+      ungroup() |>
+      select(indicador, peso) |>
+      mutate(dimension = dimension_nombre)
+    
+    return(tabla_final)
+  }
+}
+
+# Aplicar a las tres dimensiones
+tabla_eco <- crear_tabla_pesos_completa(resultados$IECO, "ECO")
+tabla_soc <- crear_tabla_pesos_completa(resultados$ISOC, "SOC")
+tabla_amb <- crear_tabla_pesos_completa(resultados$IAMB, "AMB")
+
+# Unir todo
+tabla_pesos_final <- bind_rows(tabla_eco, tabla_soc, tabla_amb) |>
+  left_join(
+    iMeta_L1 |> select(iCode, iName),
+    by = c("indicador" = "iCode")
+  ) |>
+  select(
+    dimension,
+    codigo = indicador,
+    nombre = iName,
+    peso
+  ) |>
+  arrange(dimension, desc(peso))
+
+print(tabla_pesos_final)
+
+# Verificar que suman 1 por dimensión
+tabla_pesos_final |>
+  group_by(dimension) |>
+  summarise(suma_pesos = sum(peso))
+
+# Guardar
+write.csv(tabla_pesos_final, "tabla_pesos_indicadores_completa.csv", row.names = FALSE)
+```
