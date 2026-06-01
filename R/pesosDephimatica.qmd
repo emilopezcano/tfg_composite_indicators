@@ -21,6 +21,7 @@ library(purrr)
 library(ggcorrplot)
 library(naniar)
 library(performance)
+library(tibble)
 ```
 
 ```{r}
@@ -268,17 +269,17 @@ analisis_dimension <- function(datos_norm, prefijo, corte = 0.2) {
   cat("Dimensión:", prefijo, "\n")
   cat("Indicadores:", ncol(indicadores_dim), "\n\n")
   
-  # ===== CAMBIO 1: Corregir matriz antes del KMO inicial =====
+  # 1. Matriz de correlaciones corregida
   cor_inicial <- cor(indicadores_dim, use = "pairwise.complete.obs")
   cor_inicial_corregida <- corregir_matriz_correlacion(cor_inicial)
   
+  # KMO inicial
   kmo_inicial <- KMO(indicadores_dim)
   valor_kmo_inicial <- kmo_inicial$MSA
-  
   cat("KMO inicial:", round(valor_kmo_inicial, 3), "\n\n")
   
-   # ===== CAMBIO 2: Usar matriz corregida para clustering =====
-  dist_dim <- as.dist(1 - abs(cor_inicial_corregida))  # ← Usar matriz corregida
+  # 2. Clustering con matriz corregida
+  dist_dim <- as.dist(1 - abs(cor_inicial_corregida))
   hc_dim <- hclust(dist_dim, method = "complete")
   
   plot(hc_dim,
@@ -320,12 +321,12 @@ analisis_dimension <- function(datos_norm, prefijo, corte = 0.2) {
   
   cat("Indicadores agregados creados:", ncol(indicadores_agregados), "\n\n")
   
- # ===== CAMBIO 3: Corregir matriz antes del KMO agregado =====
+  # 3. KMO agregado
   if (ncol(indicadores_agregados) >= 2) {
     cor_agregada <- cor(indicadores_agregados, use = "pairwise.complete.obs")
     cor_agregada_corregida <- corregir_matriz_correlacion(cor_agregada)
     
-    kmo_agregado <- KMO(cor_agregada_corregida)  # ← Usar matriz corregida
+    kmo_agregado <- KMO(cor_agregada_corregida)
     valor_kmo_agregado <- kmo_agregado$MSA
   } else {
     valor_kmo_agregado <- NA
@@ -333,6 +334,7 @@ analisis_dimension <- function(datos_norm, prefijo, corte = 0.2) {
   
   cat("KMO agregado:", round(valor_kmo_agregado, 3), "\n\n")
   
+  # Decisión: PCA sobre agregados u originales, o pesos iguales
   if (!is.na(valor_kmo_agregado) && valor_kmo_agregado > 0.5 && valor_kmo_agregado > valor_kmo_inicial) {
     
     cat("Decisión: PCA + Varimax sobre indicadores agregados\n\n")
@@ -365,17 +367,16 @@ analisis_dimension <- function(datos_norm, prefijo, corte = 0.2) {
     ))
   }
   
+  # 4. PCA previo para decidir número de componentes
   pca_previo <- prcomp(datos_pca, center = TRUE, scale. = TRUE)
   eigenvalues <- pca_previo$sdev^2
   n_comp <- sum(eigenvalues > 1)
-  
-  if (n_comp == 0) {
-    n_comp <- 1
-  }
+  if (n_comp == 0) n_comp <- 1
   
   cat("Componentes retenidos:", n_comp, "\n")
   cat("Eigenvalues:", round(eigenvalues, 3), "\n\n")
   
+  # 5. PCA/FA con rotación Varimax
   pca_varimax <- principal(datos_pca, nfactors = n_comp, rotate = "varimax")
   
   cargas <- pca_varimax$loadings |>
@@ -385,22 +386,42 @@ analisis_dimension <- function(datos_norm, prefijo, corte = 0.2) {
   print(cargas)
   cat("\n")
   
+  # 6. Pesos según enfoque OCDE (cargas^2 + varianza explicada)
+  cargas_df <- cargas |>
+    tibble::rownames_to_column("indicador")
+  
+  nombres_componentes <- colnames(cargas)
+  
+  pesos_ocde <- cargas_df |>
+    rowwise() |>
+    mutate(
+      Factor_Asignado = nombres_componentes[which.max(abs(c_across(all_of(nombres_componentes))))],
+      Carga_Asignada  = c_across(all_of(nombres_componentes))[which.max(abs(c_across(all_of(nombres_componentes))))]
+    ) |>
+    ungroup()
+  
+  pesos_ocde <- pesos_ocde |>
+    group_by(Factor_Asignado) |>
+    mutate(
+      Weight_in_Factor = (Carga_Asignada^2) / sum(Carga_Asignada^2)
+    ) |>
+    ungroup()
+  
   varianza_comp <- pca_varimax$Vaccounted["Proportion Var", ]
   varianza_relativa <- varianza_comp / sum(varianza_comp)
   
-  pesos <- data.frame(indicador = rownames(cargas))
-  pesos$peso <- 0
+  pesos_ocde <- pesos_ocde |>
+    mutate(
+      Var_Factor = as.numeric(varianza_relativa[Factor_Asignado]),
+      peso = Weight_in_Factor * Var_Factor
+    )
   
-  for (i in 1:n_comp) {
-    pesos$peso <- pesos$peso + abs(cargas[, i]) * varianza_relativa[i]
-  }
-  
-  pesos$peso <- pesos$peso / sum(pesos$peso)
-  
-  pesos <- pesos |>
+  pesos <- pesos_ocde |>
+    select(indicador, peso) |>
+    mutate(peso = peso / sum(peso)) |>
     arrange(desc(peso))
   
-  cat("Pesos finales:\n")
+  cat("Pesos finales (método OCDE):\n")
   print(pesos)
   cat("\n")
   cat("========================================\n\n")
