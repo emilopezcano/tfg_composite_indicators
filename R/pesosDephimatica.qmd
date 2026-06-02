@@ -182,7 +182,7 @@ iMeta <- bind_rows(iMeta_L1, iMeta_L2, iMeta_L3)
 # Comprobación: qué códigos de nivel 1 no están en iData (debería ser vacío)
 setdiff(iMeta$iCode[iMeta$Level == 1], colnames(iData))
 
-# Creo el purse: 
+# Creo el purse con los datos originales en Raw
 purse <- new_coin(
   iData    = iData,
   iMeta    = iMeta,
@@ -190,69 +190,66 @@ purse <- new_coin(
   quietly  = TRUE
 )
 
-# Imputación  MICE
+# Imputación MICE usando el dataset Raw del purse
 # 1. Preparamos datos numéricos
-df_raw <- get_dset(purse, dset = "Raw") 
-df_ids <- df_raw |> select(uCode, Time) 
-df_numeric <- df_raw |> select(-uCode, -Time) 
+df_raw <- get_dset(purse, dset = "Raw")
+df_ids <- df_raw |> select(uCode, Time)
+df_numeric <- df_raw |> select(-uCode, -Time)
 
 # 2. Diagnóstico Pre-MICE
-na_pre <- sum(is.na(df_numeric)) #Celdas vacías en total
-total_cells <- prod(dim(df_numeric)) #Tamaño total de nuestra tabla
+na_pre <- sum(is.na(df_numeric))
+total_cells <- prod(dim(df_numeric))
 cat("PRE-MICE: ", na_pre, " NAs (", round(100 * na_pre / total_cells, 2), "%)\n")
 
-# 3. Ejecutar MICE (PMM)
-#df_numeric son los datos a procesar, m=1 creamos una sola versión de datos imputados, método PMM: Predictive Mean Matching, busca valores reales existentes que cuadren según el perfil de la regón. Con maxit = 5, el algoritmo itera 5 veces para refinar sus predicciones. Fijamos seed 42. 
-mice_out <- mice(df_numeric, m = 1, method = "cart", maxit = 5, seed = 42, printFlag = FALSE)
+# 3. Ejecutar MICE
+mice_out <- mice(df_numeric, m = 1, method = "cart", maxit = 5,
+                 seed = 42, printFlag = FALSE)
 df_imputed <- complete(mice_out)
 
-# 4. Diagnóstico Post-MICE con porcentaje
-na_post <- sum(is.na(df_imputed)) #volvemos a contar los NA
+# 4. Diagnóstico Post-MICE
+na_post <- sum(is.na(df_imputed))
 cat("POST-MICE:", na_post, " NAs (", round(100 * na_post / total_cells, 2), "%)\n")
 
-# 5. ¿Qué se ha quedado sin imputar?
-if(na_post > 0){
+if (na_post > 0){
   cols_con_na <- colSums(is.na(df_imputed))
   print("Indicadores que siguen teniendo NAs:")
   print(cols_con_na[cols_con_na > 0])
 }
 
-# 6. Reconstruimos iData e integramos en el purse
+# 5. Reconstruimos iData imputado (mismas filas/columnas que Raw)
 iData_imputed_mice <- bind_cols(df_ids, df_imputed)
 
-purse <- new_coin(
-  iData = iData_imputed_mice,
-  iMeta = iMeta,
-  split_to = "all",
-  quietly = TRUE
-)
-
-# Marcar datos como ya imputados en cada coin del purse
-# (Los datos MICE ya están imputados, así que Imputed = Raw)
-for(i in seq_along(purse$coin)){
-  purse$coin[[i]]$Data$Imputed <- purse$coin[[i]]$Data$Raw
+# 6. Guardamos la versión imputada en el data set Imputed del purse
+#    (sin tocar Raw!)
+for (i in seq_along(purse$coin)) {
+  # Aseguramos que las columnas estén en el mismo orden
+  raw_cols <- colnames(purse$coin[[i]]$Data$Raw)
+  iData_imputed_mice <- iData_imputed_mice[, raw_cols]
+  
+  purse$coin[[i]]$Data$Imputed <- iData_imputed_mice
 }
 
-# Tratamos outliers 
+# Tratamos outliers sobre Imputed
 purse <- Treat(
   purse,
   dset = "Imputed",
   f_t = "winsorise",
-  f_t_para = list(na.rm = TRUE,
-                  winmax = 5, 
-                  skew_thresh = 2,
-                  kurt_thresh = 3.5,
-                  force_win = TRUE)
+  f_t_para = list(
+    na.rm = TRUE,
+    winmax = 5,
+    skew_thresh = 2,
+    kurt_thresh = 3.5,
+    force_win = TRUE
+  )
 )
 
-# Normalizamos
+# Normalizamos a partir de Treated
 purse <- Normalise(
   purse,
   dset         = "Treated",
   normalise_by = "all",
   f_n          = "n_minmax",
-  f_n_para     = list(l_u = c(0, 100))
-)
+  f_n_para     = list(l_u = c(0, 100)))
 ```
 
 # Función para elegir dimensión y realizar el análisis
